@@ -217,8 +217,85 @@
         {
           "action": "click",
           "element": "return_to_classic",
+          "then": "classic_home",
+          "notes": "Enters ASAP Classic legacy app"
+        }
+      ]
+    },
+
+    "classic_home": {
+      "name": "Classic - Home",
+      "url_pattern": "app.asapconnected.com/default.aspx",
+      "title": "Home",
+      "notes": "Landing page of ASAP Classic (legacy app). Contains the full classic nav bar — Find, Create, Tools, Configure, View Reports — plus a global Quick Search and time period selector. This is the hub for all transcript and student work.",
+      "elements": {
+        "school_name": {
+          "role": "link",
+          "label": "Hayward Adult School (4347)",
+          "id": "litSchoolName"
+        },
+        "switch_org": {
+          "role": "link",
+          "label": "switch",
+          "id": "lbSwitchOrgs"
+        },
+        "time_period": {
+          "role": "combobox",
+          "label": "Time Period",
+          "id": "ddlTimePeriod",
+          "name_attr": "ctl00$ddlTimePeriod",
+          "options": [
+            "All Active", "All Time Periods", "FallSemNonHSD2026",
+            "Summer Session II 2026", "SummerNonHSD2026", "Summer Session I 2026",
+            "ESL Spring 25-26", "FY 25-26"
+          ],
+          "notes": "Global time period filter — affects search results and reports"
+        },
+        "my_settings": { "role": "link", "label": "My Settings", "id": "MySettingsPrimary" },
+        "logout": { "role": "link", "label": "Logout", "id": "LogoutMaster" },
+        "home": { "role": "link", "label": "Home", "id": "link0Home" },
+        "quick_search_input": {
+          "role": "textbox",
+          "label": "Quick Search",
+          "id": "txtQuickSearch",
+          "notes": "Global search box — searches Students, Classes, Invoices, or Staff depending on ddlQuickSearch"
+        },
+        "quick_search_type": {
+          "role": "combobox",
+          "label": "Search Type",
+          "id": "ddlQuickSearch",
+          "options": ["Students", "Classes", "Invoices", "Staff"]
+        },
+        "quick_search_btn": {
+          "role": "button",
+          "label": "",
+          "id": "btnQuickSearch"
+        },
+        "quick_enroll": { "role": "link", "label": "Quick Enroll", "id": "HyperLink18" },
+        "find": { "role": "link", "label": "Find", "id": "accNav", "notes": "Top-level nav — expands find submenu" },
+        "create": { "role": "link", "label": "Create", "id": "ctl16_HyperLink8" },
+        "tools": { "role": "link", "label": "Tools", "id": "ctl18_HyperLink300" },
+        "configure": { "role": "link", "label": "Configure", "id": "ctl22_HyperLink12" },
+        "view_reports": { "role": "link", "label": "View Reports", "id": "ctl24_HyperLink10" },
+        "switch_view": { "role": "link", "label": "Switch View", "id": "ctl26_hlSwitch" },
+        "get_help": { "role": "link", "label": "Get Help", "id": "ctl28_HyperLink19" },
+        "asap4": { "role": "link", "label": "ASAP 4", "id": "HyperLinkASAPBeta", "notes": "Returns to new ASAP 4 (admin.asapconnected.com)" },
+        "quick_links": { "role": "link", "label": "Quick Links", "id": "HyperLink22" },
+        "last_report": { "role": "link", "label": "Last Report", "id": "lnkQN03" },
+        "last_page": { "role": "link", "label": "Last Page", "id": "lnkQN04" }
+      },
+      "transitions": [
+        {
+          "action": "fill+click",
+          "element": "quick_search_input",
+          "notes": "Search for a student by name or ID — leads to student search results",
+          "then": "?"
+        },
+        {
+          "action": "click",
+          "element": "find",
           "then": "?",
-          "notes": "Enters ASAP Classic — map next screen"
+          "notes": "Expands Find submenu — map submenu options"
         }
       ]
     }
@@ -228,7 +305,7 @@
 
   "meta": {
     "last_updated": "2026-06-09",
-    "screen_count": 5,
+    "screen_count": 6,
     "mapped_by": "CJ + Claude — screen-by-screen bookmarklet method",
     "notes": "Screens are nodes, transitions are edges. Processes will be named paths through this graph once enough screens are mapped."
   }
