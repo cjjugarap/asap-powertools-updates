@@ -111,13 +111,45 @@
         {
           "action": "click",
           "element": "next",
-          "then": "?",
-          "notes": "Submits password — map next screen"
+          "then": "login_stay_signed_in",
+          "notes": "Submits password — leads to Stay signed in prompt"
         },
         {
           "action": "click",
           "element": "switch_account",
           "then": "login_account_select"
+        }
+      ]
+    },
+
+    "login_stay_signed_in": {
+      "name": "Login - Stay Signed In",
+      "url_pattern": "id.vancoplatform.com/*/login/kmsi",
+      "title": "Stay signed in?",
+      "notes": "Optional prompt after password. User can check 'Don't ask me again' before clicking Yes. Clicking Yes completes the SSO flow and lands on the main app.",
+      "elements": {
+        "dont_ask_again": {
+          "role": "checkbox",
+          "label": "Don't ask me again",
+          "notes": "If checked, this screen is skipped on future logins"
+        },
+        "yes": {
+          "role": "button",
+          "label": "Yes",
+          "id": "setup-btn",
+          "notes": "Confirms and completes login"
+        },
+        "privacy_policy": {
+          "role": "link",
+          "label": "Privacy Policy"
+        }
+      },
+      "transitions": [
+        {
+          "action": "click",
+          "element": "yes",
+          "then": "?",
+          "notes": "Completes SSO and lands in the main app — map next screen"
         }
       ]
     }
@@ -127,7 +159,7 @@
 
   "meta": {
     "last_updated": "2026-06-09",
-    "screen_count": 3,
+    "screen_count": 4,
     "mapped_by": "CJ + Claude — screen-by-screen bookmarklet method",
     "notes": "Screens are nodes, transitions are edges. Processes will be named paths through this graph once enough screens are mapped."
   }
