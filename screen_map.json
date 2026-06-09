@@ -148,8 +148,77 @@
         {
           "action": "click",
           "element": "yes",
+          "then": "dashboard",
+          "notes": "Completes SSO and lands on the main dashboard"
+        }
+      ]
+    },
+
+    "dashboard": {
+      "name": "Dashboard",
+      "url_pattern": "admin.asapconnected.com/home",
+      "title": "Home - ASAP",
+      "notes": "Main hub after login. Contains the full nav menu, global search, quick links, and a calendar widget. 'Return to ASAP Classic' is the gateway to the legacy app where transcripts and student detail live.",
+      "elements": {
+        "logo": {
+          "role": "link",
+          "label": "ASAP",
+          "id": "asap-admin-header-logo"
+        },
+        "search": {
+          "role": "textbox",
+          "label": "Search",
+          "id": "asap-admin-search-form",
+          "name_attr": "search"
+        },
+        "switch_org": {
+          "role": "button",
+          "label": "Switch",
+          "id": "asap-admin-org-holder"
+        },
+        "quick_links": {
+          "role": "button",
+          "label": "Quick Links",
+          "id": "asap-admin-quick-links-menu-trigger"
+        },
+        "return_to_classic": {
+          "role": "link",
+          "label": "Return to ASAP Classic",
+          "id": "appReturnBtn",
+          "notes": "Key transition — enters the legacy Classic app where transcripts live"
+        },
+        "enroll": { "role": "link", "label": "Enroll", "id": "adminRegisterBtn" },
+        "staff": { "role": "link", "label": "Staff", "id": "asap-admin-nav-ul" },
+        "attendance": { "role": "link", "label": "Attendance" },
+        "calendar": { "role": "link", "label": "Calendar" },
+        "communication_center": { "role": "link", "label": "Communication Center", "id": "ComunicationsCenter" },
+        "checkin_dashboard": { "role": "link", "label": "Check-in: Dashboard", "id": "checkInDashboard" },
+        "checkin_kiosk": { "role": "link", "label": "Check-in: Kiosk", "id": "checkInKiosk" },
+        "checkin_facilities": { "role": "link", "label": "Check-in: Facilities", "id": "checkInFacility" },
+        "registrar_mode": { "role": "link", "label": "Registrar Mode", "id": "registrarMode" },
+        "point_of_sale": { "role": "link", "label": "Point Of Sale" },
+        "account_info": { "role": "link", "label": "Account Info" },
+        "course_groups": { "role": "link", "label": "Course Groups", "id": "GroupCourses" },
+        "customer_groups": { "role": "link", "label": "Customer Groups", "id": "GroupCustomers" },
+        "discounts": { "role": "link", "label": "Discounts", "id": "Discounts" },
+        "features": { "role": "link", "label": "Features" },
+        "financials": { "role": "link", "label": "Financials", "id": "lnkSetupFinancials" },
+        "general_settings": { "role": "link", "label": "General Settings" },
+        "online_registration": { "role": "link", "label": "Online Registration" },
+        "registration_forms": { "role": "link", "label": "Registration Forms", "id": "RegistrationForms" },
+        "sites": { "role": "link", "label": "Sites" },
+        "terms": { "role": "link", "label": "Terms" },
+        "user_access": { "role": "link", "label": "User Access" },
+        "waivers": { "role": "link", "label": "Waivers" },
+        "toggle_calendar": { "role": "button", "label": "Toggle calendar" },
+        "terms_of_use": { "role": "link", "label": "Terms Of Use", "id": "asap-admin-interface" }
+      },
+      "transitions": [
+        {
+          "action": "click",
+          "element": "return_to_classic",
           "then": "?",
-          "notes": "Completes SSO and lands in the main app — map next screen"
+          "notes": "Enters ASAP Classic — map next screen"
         }
       ]
     }
@@ -159,7 +228,7 @@
 
   "meta": {
     "last_updated": "2026-06-09",
-    "screen_count": 4,
+    "screen_count": 5,
     "mapped_by": "CJ + Claude — screen-by-screen bookmarklet method",
     "notes": "Screens are nodes, transitions are edges. Processes will be named paths through this graph once enough screens are mapped."
   }
