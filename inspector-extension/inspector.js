@@ -26,6 +26,7 @@
     'print','download','export','search','find','submit','ok',
     'yes','no','back','next','continue','select','deselect',
     'check in','check out','unenroll','transfer','copy',
+    'view transcript report','view transcript','transcript',
   ]);
 
   function isSafeActionLabel(text) {
