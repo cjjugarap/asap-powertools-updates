@@ -459,38 +459,32 @@
       "title": "ASAP Connected - Transactions By Customer",
       "notes": "Transcript report configuration popup opened from Student Detail → Transcripts tab → View Transcript Report. User configures display options via checkboxes, then clicks Filter or Print. Opens in a separate browser window — extension must be used from within the popup itself.",
       "elements": {
-        "hide_gpa": { "role": "checkbox", "label": "Hide GPA" },
-        "display_cal_grant_gpa": { "role": "checkbox", "label": "Display Cal Grant GPA" },
-        "display_attendance_hours": { "role": "checkbox", "label": "Display Attendance Hours" },
-        "display_test_score": { "role": "checkbox", "label": "Display Test Score" },
-        "landscape": { "role": "checkbox", "label": "Landscape" },
-        "group_by_year_school": { "role": "checkbox", "label": "Group by Year and School Name" },
-        "display_requirement_group": { "role": "checkbox", "label": "Display Requirement Group" },
-        "show_all_enrollments": { "role": "checkbox", "label": "Show all enrollments regardless of status" },
-        "display_enrollment_status": { "role": "checkbox", "label": "Display Enrollment Status (Portrait Only)" },
-        "report_card": { "role": "checkbox", "label": "Report Card" },
-        "display_diploma_date": { "role": "checkbox", "label": "Display Diploma Date" },
-        "display_certificate_date": { "role": "checkbox", "label": "Display Certificate Date" },
-        "display_graduation_date": { "role": "checkbox", "label": "Display Graduation Date" },
-        "show_dropped_classes": { "role": "checkbox", "label": "Show dropped classes" },
-        "display_grade_level": { "role": "checkbox", "label": "Display Grade Level" },
+        "hide_gpa":                  { "role": "checkbox", "label": "Hide GPA",                                       "id": "HideGPA",                        "default": false },
+        "display_cal_grant_gpa":     { "role": "checkbox", "label": "Display Cal Grant GPA",                         "id": "DisplayCalGPA",                  "default": false },
+        "display_attendance_hours":  { "role": "checkbox", "label": "Display Attendance Hours",                      "id": "DisplayAttendanceHours",         "default": false },
+        "display_test_score":        { "role": "checkbox", "label": "Display Test Score",                            "id": "DisplayTestScore",               "default": false },
+        "landscape":                 { "role": "checkbox", "label": "Landscape",                                     "id": "LandscapeTranscript",            "default": true  },
+        "group_by_year_school":      { "role": "checkbox", "label": "Group by Year and School Name",                 "id": "Grouping",                       "default": false },
+        "display_requirement_group": { "role": "checkbox", "label": "Display Requirement Group",                     "id": "GroupingRequirement",            "default": false },
+        "show_all_enrollments":      { "role": "checkbox", "label": "Show all enrollments regardless of status",     "id": "DisplayAllRegardlessOfStatus",   "default": false },
+        "display_enrollment_status": { "role": "checkbox", "label": "Display Enrollment Status (Portrait Only)",     "id": "DisplayEnrStatus",               "default": false },
+        "report_card":               { "role": "checkbox", "label": "Report Card",                                   "id": "ReportCard",                     "default": false, "notes": "Mutually exclusive with other options; reveals a time period selector" },
+        "display_diploma_date":      { "role": "checkbox", "label": "Display Diploma Date",                         "id": "DisplayDiplomaDate",             "default": true  },
+        "display_certificate_date":  { "role": "checkbox", "label": "Display Certificate Date",                     "id": "DisplayCertificateDate",         "default": false },
+        "display_graduation_date":   { "role": "checkbox", "label": "Display Graduation Date",                      "id": "DisplayGraduationDate",          "default": true  },
+        "show_dropped_classes":      { "role": "checkbox", "label": "Show dropped classes",                         "id": "ShowDClasses",                   "default": false },
+        "display_grade_level":       { "role": "checkbox", "label": "Display Grade Level",                          "id": "DisplayGradeLevel",              "default": false },
         "btn_filter": {
           "role": "button",
           "label": "(unlabelled — Filter)",
           "id": "btnFilter",
-          "notes": "Applies selected options and refreshes transcript preview"
+          "notes": "Applies selected options and refreshes the transcript preview"
         },
         "btn_print": {
           "role": "button",
-          "label": "(unlabelled — Print)",
+          "label": "(unlabelled — Print / Export to Print)",
           "id": "btnPrint",
-          "notes": "Basic print button"
-        },
-        "btn_export_to_print": {
-          "role": "button",
-          "label": "Export to Print",
-          "id_unknown": true,
-          "notes": "The button used in the HSD transcript process. May only appear after clicking Filter. Run inspector on the post-Filter popup state to capture its ID."
+          "notes": "Sends transcript to the browser print dialog. This is the 'Export to Print' button referenced in the HSD process."
         },
         "upload_second_logo": {
           "role": "link",
@@ -597,8 +591,8 @@
           "step": 10,
           "screen": "transcript_report_popup",
           "action": "click",
-          "element": "btn_export_to_print",
-          "notes": "Sends to print. btn_export_to_print may appear after filtering — map its ID on next inspection."
+          "element": "btn_print",
+          "notes": "btnPrint — opens the browser print dialog (Export to Print)"
         }
       ]
     }
