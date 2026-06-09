@@ -396,8 +396,8 @@
         {
           "action": "click",
           "element": "print_report",
-          "then": "?",
-          "notes": "Opens the transcript/detail report — map next"
+          "then": "transcript_report_popup",
+          "notes": "Opens the transcript/detail report in a new popup window"
         },
         {
           "action": "click",
@@ -408,11 +408,70 @@
     }
   },
 
+    "transcript_report_popup": {
+      "name": "Classic - Transcript Report (Popup)",
+      "url_pattern": "app.asapconnected.com/Reports/CustomerTranscript.aspx?StudentID=*",
+      "title": "ASAP Connected - Transactions By Customer",
+      "notes": "Transcript report configuration popup opened from Student Detail → Transcripts tab → View Transcript Report. User configures display options via checkboxes, then clicks Filter or Print. Opens in a separate browser window — extension must be used from within the popup itself.",
+      "elements": {
+        "hide_gpa": { "role": "checkbox", "label": "Hide GPA" },
+        "display_cal_grant_gpa": { "role": "checkbox", "label": "Display Cal Grant GPA" },
+        "display_attendance_hours": { "role": "checkbox", "label": "Display Attendance Hours" },
+        "display_test_score": { "role": "checkbox", "label": "Display Test Score" },
+        "landscape": { "role": "checkbox", "label": "Landscape" },
+        "group_by_year_school": { "role": "checkbox", "label": "Group by Year and School Name" },
+        "display_requirement_group": { "role": "checkbox", "label": "Display Requirement Group" },
+        "show_all_enrollments": { "role": "checkbox", "label": "Show all enrollments regardless of status" },
+        "display_enrollment_status": { "role": "checkbox", "label": "Display Enrollment Status (Portrait Only)" },
+        "report_card": { "role": "checkbox", "label": "Report Card" },
+        "display_diploma_date": { "role": "checkbox", "label": "Display Diploma Date" },
+        "display_certificate_date": { "role": "checkbox", "label": "Display Certificate Date" },
+        "display_graduation_date": { "role": "checkbox", "label": "Display Graduation Date" },
+        "show_dropped_classes": { "role": "checkbox", "label": "Show dropped classes" },
+        "display_grade_level": { "role": "checkbox", "label": "Display Grade Level" },
+        "btn_filter": {
+          "role": "button",
+          "label": "(unlabelled — Filter)",
+          "id": "btnFilter",
+          "notes": "Applies selected options and refreshes transcript preview"
+        },
+        "btn_print": {
+          "role": "button",
+          "label": "(unlabelled — Print)",
+          "id": "btnPrint",
+          "notes": "Sends transcript to printer / print dialog"
+        },
+        "upload_second_logo": {
+          "role": "link",
+          "label": "Upload second logo"
+        },
+        "privacy_policy": {
+          "role": "link",
+          "label": "Privacy Policy"
+        }
+      },
+      "transitions": [
+        {
+          "action": "click",
+          "element": "btn_filter",
+          "then": "transcript_report_popup",
+          "notes": "Refreshes the same popup with updated display options applied"
+        },
+        {
+          "action": "click",
+          "element": "btn_print",
+          "then": "browser_print_dialog",
+          "notes": "Opens browser print dialog — outside app scope"
+        }
+      ]
+    }
+  },
+
   "processes": {},
 
   "meta": {
     "last_updated": "2026-06-09",
-    "screen_count": 8,
+    "screen_count": 9,
     "mapped_by": "CJ + Claude — screen-by-screen bookmarklet method",
     "notes": "Screens are nodes, transitions are edges. Processes will be named paths through this graph once enough screens are mapped."
   }
