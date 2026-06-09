@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ASAP Page Inspector",
   "version": "1.0",
-  "description": "Maps any ASAP Connected screen — labels, IDs, structure. No PII captured.",
+  "description": "Maps any ASAP Connected screen - labels, IDs, structure. No PII captured.",
   "permissions": ["scripting", "activeTab"],
   "background": {
     "service_worker": "background.js"
