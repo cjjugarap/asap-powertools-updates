@@ -1,0 +1,80 @@
+{
+  "screens": {
+    "login_org": {
+      "name": "Login — Organization ID",
+      "url_pattern": "admin.asapconnected.com/account/login",
+      "title": "Login",
+      "notes": "Entry point. User enters their numeric Org ID and clicks Continue.",
+      "elements": {
+        "org": {
+          "role": "spinbutton",
+          "label": "Organization ID #",
+          "id": "org",
+          "name_attr": "org"
+        },
+        "continue": {
+          "role": "button",
+          "label": "Continue",
+          "id": "continue"
+        },
+        "need_help": {
+          "role": "link",
+          "label": "Need help?"
+        }
+      },
+      "transitions": [
+        {
+          "action": "click",
+          "element": "continue",
+          "then": "login_account_select",
+          "notes": "Proceeds after Org ID is filled in"
+        }
+      ]
+    },
+
+    "login_account_select": {
+      "name": "Login — Select Account",
+      "url_pattern": "id.vancoplatform.com/*/login/account-select",
+      "title": "Select an Account",
+      "notes": "SSO account picker via Vanco identity platform. The account tile is an unlabelled button (likely an avatar/image component). 'more' expands account options. User clicks their account tile to proceed.",
+      "elements": {
+        "account_tile": {
+          "role": "button",
+          "label": "(unlabelled)",
+          "id": null,
+          "notes": "The saved account card — label not readable by inspector, rendered as image/custom component"
+        },
+        "more": {
+          "role": "button",
+          "label": "more",
+          "id": "toggle-account-0",
+          "notes": "Expands additional options for the saved account"
+        },
+        "add_another_account": {
+          "role": "link",
+          "label": "Add another account"
+        },
+        "privacy_policy": {
+          "role": "link",
+          "label": "Privacy Policy"
+        }
+      },
+      "transitions": [
+        {
+          "action": "click",
+          "element": "account_tile",
+          "then": "?",
+          "notes": "Selecting the account proceeds to the next login step or dashboard — map next screen"
+        }
+      ]
+    }
+  },
+
+  "processes": {},
+
+  "meta": {
+    "last_updated": "2026-06-09",
+    "mapped_by": "CJ + Claude — screen-by-screen bookmarklet method",
+    "notes": "Screens are nodes, transitions are edges. Processes will be named paths through this graph once enough screens are mapped."
+  }
+}
