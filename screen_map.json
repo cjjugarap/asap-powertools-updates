@@ -63,8 +63,61 @@
         {
           "action": "click",
           "element": "account_tile",
+          "then": "login_password",
+          "notes": "Selecting the account loads the password entry screen"
+        }
+      ]
+    },
+
+    "login_password": {
+      "name": "Login — Enter Password",
+      "url_pattern": "id.vancoplatform.com/*/login/pwd",
+      "title": "Enter Password",
+      "notes": "Vanco SSO password step. Email is pre-filled from the selected account (login_hint in URL). Password field is sensitive and always redacted.",
+      "elements": {
+        "password": {
+          "role": "textbox",
+          "label": "Password",
+          "id": "password",
+          "sensitive": true
+        },
+        "toggle_password_visibility": {
+          "role": "button",
+          "label": "toggle password visibility",
+          "notes": "Show/hide password toggle — no ID"
+        },
+        "next": {
+          "role": "button",
+          "label": "Next",
+          "id": "login-btn",
+          "notes": "Submits password and proceeds"
+        },
+        "switch_account": {
+          "role": "link",
+          "label": "Switch account",
+          "notes": "Goes back to account select"
+        },
+        "forgot_password": {
+          "role": "link",
+          "label": "Forgot password?",
+          "id": "password-helper-text"
+        },
+        "privacy_policy": {
+          "role": "link",
+          "label": "Privacy Policy"
+        }
+      },
+      "transitions": [
+        {
+          "action": "click",
+          "element": "next",
           "then": "?",
-          "notes": "Selecting the account proceeds to the next login step or dashboard — map next screen"
+          "notes": "Submits password — map next screen"
+        },
+        {
+          "action": "click",
+          "element": "switch_account",
+          "then": "login_account_select"
         }
       ]
     }
@@ -74,6 +127,7 @@
 
   "meta": {
     "last_updated": "2026-06-09",
+    "screen_count": 3,
     "mapped_by": "CJ + Claude — screen-by-screen bookmarklet method",
     "notes": "Screens are nodes, transitions are edges. Processes will be named paths through this graph once enough screens are mapped."
   }
