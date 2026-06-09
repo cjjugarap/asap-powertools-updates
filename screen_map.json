@@ -327,8 +327,8 @@
         {
           "action": "click",
           "element": "View Details",
-          "then": "?",
-          "notes": "Opens the individual student detail page — map next"
+          "then": "student_detail",
+          "notes": "Opens the individual student detail page"
         },
         {
           "action": "click",
@@ -343,6 +343,68 @@
           "notes": "Opens quick enroll flow for that student"
         }
       ]
+    },
+
+    "student_detail": {
+      "name": "Classic - Student Detail",
+      "url_pattern": "app.asapconnected.com/StudentDetail.aspx?id=*",
+      "title": "Student Detail",
+      "notes": "Full record for a single student. Contains multiple data tables (enrollments, transcripts, attendance, tests, invoices, etc). Key screen for transcript automation — the Print button triggers the transcript report.",
+      "pii_warning": "Page contains student PII in data rows. Inspector suppresses data rows automatically.",
+      "table_columns": {
+        "enrollments": ["Code", "Course Name", "Instructor", "Enrollment Date", "Activity", "EventID", "Status", "Start Date", "endDate", "Auto Re-Enroll", "Invoice ID", "Invoice Date", "Amount"],
+        "transcript": ["Year", "Term", "Class", "Teacher", "Grade", "Credits", "School Name", "Class Name", "Class Number", "Grade Level", "Grade Earned", "Credit Earned", "Course Group", "Subject"],
+        "schedule": ["Schedule", "# of Lessons Scheduled", "Unscheduled Lessons", "Lesson Completed", "Duration", "Invoice"],
+        "attendance": ["Service", "Date", "Time", "Staff", "Notes"],
+        "tests": ["Test Name", "Student TestID", "Section", "Result", "Score", "Level", "Site", "Facility"]
+      },
+      "elements": {
+        "view_schedule": {
+          "role": "link",
+          "label": "View Schedule",
+          "id": "ContentPlaceHolder1_btnViewSchedule",
+          "id_suffix": "btnViewSchedule"
+        },
+        "print_report": {
+          "role": "button",
+          "label": "View and Print student's detail report",
+          "id": "ContentPlaceHolder1_btnPrint",
+          "id_suffix": "btnPrint",
+          "name_attr": "ctl00$ContentPlaceHolder1$btnPrint",
+          "notes": "KEY — triggers the transcript/detail report popup"
+        },
+        "back_to_students": {
+          "role": "link",
+          "label": "Back to Students",
+          "id": "ContentPlaceHolder1_hlBackStudentsList",
+          "id_suffix": "hlBackStudentsList"
+        },
+        "edit": {
+          "role": "link",
+          "label": "edit",
+          "id": "ContentPlaceHolder1_btnCustTypeEdit",
+          "id_suffix": "btnCustTypeEdit"
+        },
+        "remove_group": {
+          "role": "link",
+          "label": "Remove",
+          "id": "ContentPlaceHolder1_rptGroups_lnkDeleteCustomerGroup_0",
+          "notes": "Removes a customer group from the student"
+        }
+      },
+      "transitions": [
+        {
+          "action": "click",
+          "element": "print_report",
+          "then": "?",
+          "notes": "Opens the transcript/detail report — map next"
+        },
+        {
+          "action": "click",
+          "element": "back_to_students",
+          "then": "student_search_results"
+        }
+      ]
     }
   },
 
@@ -350,7 +412,7 @@
 
   "meta": {
     "last_updated": "2026-06-09",
-    "screen_count": 7,
+    "screen_count": 8,
     "mapped_by": "CJ + Claude — screen-by-screen bookmarklet method",
     "notes": "Screens are nodes, transitions are edges. Processes will be named paths through this graph once enough screens are mapped."
   }
