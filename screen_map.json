@@ -426,15 +426,16 @@
         "transcripts_tab": {
           "role": "tab",
           "label": "Transcripts",
-          "notes": "Tab on student detail page. Click after Credits tab work to access View Transcript Report link.",
+          "notes": "Tab on student detail page. Click after Credits tab work to access View Transcript Report link. Tab ID not captured by inspector (RadPageView hidden panel) — click by label.",
           "id_unknown": true
         },
         "view_transcript_report": {
           "role": "link",
           "label": "View Transcript Report",
+          "id": "ContentPlaceHolder1_aTranscriptReport",
+          "id_suffix": "aTranscriptReport",
           "section": "Transcripts tab",
-          "notes": "Opens the transcript report popup (CustomerTranscript.aspx) in a new window.",
-          "id_unknown": true
+          "notes": "Opens CustomerTranscript.aspx in a new popup window."
         }
       },
       "transitions": [
