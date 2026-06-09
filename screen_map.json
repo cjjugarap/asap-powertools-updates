@@ -366,8 +366,11 @@
             "select_program": {
               "role": "combobox",
               "label": "Select Program",
+              "id": "ContentPlaceHolder1_ddlPrograms",
+              "id_suffix": "ddlPrograms",
+              "name_attr": "ctl00$ContentPlaceHolder1$ddlPrograms",
               "section": "Certificates & Programs",
-              "notes": "Selecting a program reveals the credit detail fields below. For transcript printing, choose 'High School Diploma'.",
+              "notes": "Native <select> (not Kendo). Selecting a program reveals the credit detail fields below. For transcript printing, choose 'High School Diploma'.",
               "known_options": ["High School Diploma"]
             },
             "diploma_date": {

@@ -24,12 +24,15 @@
       "locators": {}
     },
     {
-      "type": "select_kendo",
+      "type": "select_option",
       "role": "combobox",
       "name": "Select Program",
       "nth": 0,
       "label": "High School Diploma",
-      "locators": {}
+      "locators": {
+        "id": "ContentPlaceHolder1_ddlPrograms",
+        "id_suffix": "ddlPrograms"
+      }
     },
     {
       "type": "swap_dates",
