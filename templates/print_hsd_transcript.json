@@ -24,7 +24,7 @@
       "locators": {}
     },
     {
-      "type": "select_option",
+      "type": "select_kendo",
       "role": "combobox",
       "name": "Select Program",
       "nth": 0,
