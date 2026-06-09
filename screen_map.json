@@ -288,14 +288,58 @@
         {
           "action": "fill+click",
           "element": "quick_search_input",
-          "notes": "Search for a student by name or ID — leads to student search results",
-          "then": "?"
+          "notes": "Search for a student by name or ID",
+          "then": "student_search_results"
         },
         {
           "action": "click",
           "element": "find",
           "then": "?",
           "notes": "Expands Find submenu — map submenu options"
+        }
+      ]
+    },
+
+    "student_search_results": {
+      "name": "Classic - Student Search Results",
+      "url_pattern": "app.asapconnected.com/Students.aspx",
+      "title": "Students",
+      "notes": "Repeating list of matching students. Each row contains student PII (full name, email, phone, DOB, address, student ID) plus a set of action links. The inspector suppresses all data-row text except known action labels to protect PII.",
+      "pii_warning": "This screen contains student PII in every row. Never paste raw page content — always use the inspector which suppresses data rows automatically.",
+      "columns": [
+        "Full Name", "Email", "Phone", "Date of Birth", "Address", "Student ID"
+      ],
+      "row_actions": [
+        { "role": "link", "label": "Quick Enroll" },
+        { "role": "link", "label": "Email" },
+        { "role": "link", "label": "View Schedule" },
+        { "role": "link", "label": "View Details" },
+        { "role": "link", "label": "View Account" },
+        { "role": "link", "label": "Edit" }
+      ],
+      "page_controls": [
+        { "role": "button", "label": "Advanced Search", "notes": "Opens advanced filter options" },
+        { "role": "button", "label": "Add New", "notes": "Creates a new student record" },
+        { "notes": "Sortable columns — clicking a column header re-sorts the list" }
+      ],
+      "transitions": [
+        {
+          "action": "click",
+          "element": "View Details",
+          "then": "?",
+          "notes": "Opens the individual student detail page — map next"
+        },
+        {
+          "action": "click",
+          "element": "Edit",
+          "then": "?",
+          "notes": "Opens the student edit form — map next"
+        },
+        {
+          "action": "click",
+          "element": "Quick Enroll",
+          "then": "?",
+          "notes": "Opens quick enroll flow for that student"
         }
       ]
     }
@@ -305,7 +349,7 @@
 
   "meta": {
     "last_updated": "2026-06-09",
-    "screen_count": 6,
+    "screen_count": 7,
     "mapped_by": "CJ + Claude — screen-by-screen bookmarklet method",
     "notes": "Screens are nodes, transitions are edges. Processes will be named paths through this graph once enough screens are mapped."
   }

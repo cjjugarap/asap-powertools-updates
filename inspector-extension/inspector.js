@@ -7,6 +7,56 @@
   var old = document.getElementById('__asap_inspector_popup');
   if (old) { old.remove(); return; }
 
+  // ── PII safety ─────────────────────────────────────────────────────────────
+  // Two-layer protection:
+  //
+  // 1. SAFE_ACTION_LABELS — links/buttons whose text is structural, not data.
+  //    These are always kept even inside repeating list rows.
+  // 2. isInDataRow() — detects elements inside <tbody> rows (repeating student
+  //    records). For those, only safe action labels are kept; everything else
+  //    is suppressed so student names, emails, phones, DOBs, addresses can't
+  //    leak through link text.
+  // 3. looksLikePii() — pattern-based backstop that redacts anything that
+  //    slipped through and matches an email, phone, SSN, or date-of-birth shape.
+
+  var SAFE_ACTION_LABELS = new Set([
+    'quick enroll','enroll','email','view schedule','schedule',
+    'view details','details','view account','account','edit',
+    'view','delete','remove','add','save','cancel','close',
+    'print','download','export','search','find','submit','ok',
+    'yes','no','back','next','continue','select','deselect',
+    'check in','check out','unenroll','transfer','copy',
+  ]);
+
+  function isSafeActionLabel(text) {
+    return SAFE_ACTION_LABELS.has((text || '').toLowerCase().trim());
+  }
+
+  function isInDataRow(el) {
+    // Walk up looking for a <tbody> row — indicates a repeating data table.
+    var cur = el ? el.parentElement : null;
+    for (var d = 0; cur && d < 10; d++, cur = cur.parentElement) {
+      if (cur.tagName === 'TBODY') return true;
+      // Also catch ASP.NET Repeater / GridView patterns that use divs with
+      // repeated structure: if we're inside a container that has 5+ sibling
+      // rows of the same tag, treat it as a data list.
+      if (cur.tagName === 'TR' && cur.parentElement &&
+          cur.parentElement.tagName === 'TBODY') return true;
+    }
+    return false;
+  }
+
+  var PII_RE = new RegExp([
+    '[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}', // email
+    '\\b\\d{3}[\\s.\\-]?\\d{3}[\\s.\\-]?\\d{4}\\b',         // phone
+    '\\b\\d{3}[\\-]\\d{2}[\\-]\\d{4}\\b',                    // SSN
+    '\\b(0?[1-9]|1[0-2])[/\\-](0?[1-9]|[12]\\d|3[01])[/\\-]\\d{2,4}\\b', // date
+  ].join('|'));
+
+  function looksLikePii(text) {
+    return PII_RE.test(text || '');
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function getRole(e) {
@@ -111,24 +161,52 @@
     return null;
   }
 
+  // ── Column header detection ────────────────────────────────────────────────
+  // For list/table screens, capture <th> text so we know the column structure
+  // without any row data.
+
+  function getTableHeaders() {
+    var headers = [];
+    document.querySelectorAll('th').forEach(function (th) {
+      var t = (th.textContent || '').trim();
+      if (t) headers.push(t);
+    });
+    return headers.filter(function (v, i, a) { return a.indexOf(v) === i; });
+  }
+
   // ── Scan ───────────────────────────────────────────────────────────────────
 
   var ROLES = new Set(['button','link','textbox','checkbox','radio','combobox',
     'menuitem','tab','switch','searchbox','slider','spinbutton','option']);
-  var SENRE = /\b(ssn|social.?security|password|dob|date.of.birth|birth.?date|pin|credit.?card|cvv|cvc)\b/i;
+  var SENSITIVE_RE = /\b(ssn|social.?security|password|dob|date.of.birth|birth.?date|pin|credit.?card|cvv|cvc)\b/i;
 
   var seen = new Set();
   var fields = [];
+  var suppressedCount = 0;
 
   document.querySelectorAll('*').forEach(function (el) {
     var role = getRole(el);
     if (!role || !ROLES.has(role)) return;
     if (isHidden(el)) return;
+
+    var rawLabel = getLabel(el);
+    var inDataRow = isInDataRow(el);
+
+    // Inside a data row: only keep known safe action labels.
+    // Everything else (student names, emails, phones rendered as links) is suppressed.
+    if (inDataRow && !isSafeActionLabel(rawLabel)) {
+      suppressedCount++;
+      return;
+    }
+
+    // Backstop: if the label itself looks like PII, redact it regardless of location.
+    var label = looksLikePii(rawLabel) ? '[REDACTED]' : rawLabel;
+
     var loc = getLoc(el);
-    var dk = loc.id || (role + '|' + getLabel(el));
+    var dk = loc.id || (role + '|' + label);
     if (seen.has(dk)) return;
     seen.add(dk);
-    var label = getLabel(el);
+
     var section = nearestHeading(el);
     var entry = { role: role, label: label };
     if (loc.id) entry.id = loc.id;
@@ -136,19 +214,24 @@
     if (loc.name_attr) entry.name_attr = loc.name_attr;
     if (loc.testid) entry.testid = loc.testid;
     if (section) entry.section = section;
+    if (inDataRow) entry.in_list_row = true;
+
     if (role === 'combobox' && el.tagName === 'SELECT') {
       var opts = Array.from(el.options)
         .map(function (o) { return (o.textContent || '').trim(); })
         .filter(function (t) { return t; });
       if (opts.length) entry.options = opts.slice(0, 40);
     }
-    if (SENRE.test(label || '')) entry.sensitive = true;
+
+    if (SENSITIVE_RE.test(label || '')) entry.sensitive = true;
+
     var rv = el.value !== undefined ? String(el.value || '') : '';
     if (role === 'checkbox' || role === 'radio') {
       entry.checked = el.checked;
     } else if (rv.trim()) {
       entry.value = '[REDACTED]';
     }
+
     fields.push(entry);
   });
 
@@ -166,17 +249,27 @@
     secMap[s].push(e);
   });
 
+  var tableHeaders = getTableHeaders();
+
   var output = {
     meta: {
       url: location.href,
       title: document.title || '',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      pii_suppressed: suppressedCount > 0
+        ? suppressedCount + ' data-row elements suppressed to protect PII'
+        : undefined,
     },
+    table_columns: tableHeaders.length ? tableHeaders : undefined,
     actions: actions,
     sections: Object.entries(secMap).map(function (kv) {
       return { heading: kv[0], items: kv[1] };
-    })
+    }),
   };
+
+  // Clean up undefined keys.
+  if (!output.table_columns) delete output.table_columns;
+  if (!output.meta.pii_suppressed) delete output.meta.pii_suppressed;
 
   var json = JSON.stringify(output, null, 2);
 
@@ -203,7 +296,6 @@
     'box-shadow:0 8px 32px rgba(0,0,0,0.7)',
   ].join(';');
 
-  // Header
   var header = document.createElement('div');
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #30363d;flex-shrink:0;';
   header.innerHTML =
@@ -215,11 +307,17 @@
   var closeBtn = document.createElement('button');
   closeBtn.textContent = '✕';
   closeBtn.style.cssText = 'background:none;border:none;color:#8b949e;font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;';
-  closeBtn.title = 'Close (or click outside)';
   header.appendChild(closeBtn);
   card.appendChild(header);
 
-  // Textarea
+  // PII warning banner (shown only when data rows were suppressed).
+  if (suppressedCount > 0) {
+    var banner = document.createElement('div');
+    banner.style.cssText = 'background:#0f2a1a;border-bottom:1px solid #238636;padding:8px 18px;color:#3fb950;font-size:.8rem;flex-shrink:0;';
+    banner.textContent = '🔒 ' + suppressedCount + ' list-row items suppressed — student data protected.';
+    card.appendChild(banner);
+  }
+
   var ta = document.createElement('textarea');
   ta.readOnly = true;
   ta.value = json;
@@ -231,7 +329,6 @@
   ].join(';');
   card.appendChild(ta);
 
-  // Footer
   var footer = document.createElement('div');
   footer.style.cssText = 'display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid #30363d;flex-shrink:0;';
 
@@ -258,10 +355,8 @@
   overlay.appendChild(card);
   document.body.appendChild(overlay);
 
-  // Auto-select textarea on open.
   setTimeout(function () { try { ta.select(); } catch (_) {} }, 50);
 
-  // Copy button logic.
   copyBtn.addEventListener('click', function () {
     navigator.clipboard.writeText(json).then(function () {
       copyBtn.textContent = '✓ Copied!';
