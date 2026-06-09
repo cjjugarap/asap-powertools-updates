@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ASAP Powertools — Page Inspector Bookmarklet</title>
+<style>
+  body { font-family: Segoe UI, sans-serif; background: #0d1117; color: #e6edf3; max-width: 640px; margin: 60px auto; padding: 0 24px; }
+  h1 { color: #39d3ff; font-size: 1.4rem; margin-bottom: 4px; }
+  p  { color: #8b949e; font-size: .95rem; line-height: 1.6; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 28px 32px; margin-top: 28px; }
+  .card h2 { color: #ffd23f; font-size: 1rem; margin-top: 0; }
+  .step { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 18px; }
+  .num  { background: #39d3ff; color: #06222b; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: .85rem; flex-shrink: 0; margin-top: 2px; }
+  .step p { margin: 0; color: #c9d1d9; font-size: .9rem; }
+  a.bookmarklet {
+    display: inline-block;
+    background: #39d3ff;
+    color: #06222b;
+    font-weight: bold;
+    font-size: 1rem;
+    padding: 12px 28px;
+    border-radius: 8px;
+    text-decoration: none;
+    cursor: grab;
+    margin: 8px 0 18px;
+    border: 3px dashed transparent;
+    transition: border-color .2s;
+  }
+  a.bookmarklet:hover { border-color: #ffd23f; }
+  .privacy { background: #0f2a1a; border: 1px solid #238636; border-radius: 8px; padding: 14px 18px; margin-top: 20px; color: #3fb950; font-size: .85rem; }
+  .privacy strong { color: #56d364; }
+  footer { margin-top: 40px; color: #484f58; font-size: .8rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>⚡ ASAP Powertools — Page Inspector</h1>
+<p>One-click screen mapper. Run it on any ASAP Connected page to extract its structure — no PII, just labels and element IDs — then paste the output into the chat to plan automation.</p>
+
+<div class="card">
+  <h2>Step 1 — Add to your bookmarks bar</h2>
+
+  <div class="step">
+    <div class="num">1</div>
+    <p>Make sure your browser's <strong>bookmarks bar is visible</strong>.<br>
+       Chrome / Edge: <code>Ctrl+Shift+B</code> &nbsp;|&nbsp; Firefox: <code>Ctrl+Shift+B</code></p>
+  </div>
+  <div class="step">
+    <div class="num">2</div>
+    <p>Drag the button below up to your bookmarks bar and drop it there.</p>
+  </div>
+
+  <a class="bookmarklet" href="javascript:(()=>{function getRole(e){if(!e||!e.tagName)return null;const t=e.getAttribute&&e.getAttribute('role');if(t)return t;const n=e.tagName.toLowerCase();if(n==='button')return 'button';if(n==='a'&&e.hasAttribute('href'))return 'link';if(n==='select')return 'combobox';if(n==='textarea')return 'textbox';if(n==='input'){const t=(e.getAttribute('type')||'text').toLowerCase();if(['text','email','tel','url','search','password'].includes(t))return 'textbox';if(t==='checkbox')return 'checkbox';if(t==='radio')return 'radio';if(t==='number')return 'spinbutton';if(t==='range')return 'slider';if(['submit','button','reset','image'].includes(t))return 'button';return 'textbox';}return null;}function getLabel(e){if(!e)return '';const a=n=>e.getAttribute&&e.getAttribute(n);const lb=a('aria-labelledby');if(lb){const p=lb.split(/\s+/).map(id=>{const r=document.getElementById(id);return r?(r.textContent||'').trim():'';}).filter(Boolean);if(p.length)return p.join(' ');}const al=a('aria-label');if(al)return al.trim();if(e.id){try{const l=document.querySelector('label[for="'+CSS.escape(e.id)+'"]');if(l)return(l.textContent||'').trim();}catch(_){}}if(e.closest){const w=e.closest('label');if(w){const c=w.cloneNode(true);c.querySelectorAll('input,textarea,select').forEach(n=>n.remove());return(c.textContent||'').trim();}}const t=e.tagName.toUpperCase();if(t==='BUTTON'||t==='A')return(e.textContent||'').trim();if(t==='INPUT'||t==='TEXTAREA')return a('placeholder')||a('title')||a('name')||'';return a('title')||'';}function getLoc(e){const l={};let c=e;for(let d=0;c&&d<4;d++,c=c.parentElement){const id=c.getAttribute&&c.getAttribute('id');const nm=c.getAttribute&&c.getAttribute('name');const ti=c.getAttribute&&(c.getAttribute('data-testid')||c.getAttribute('data-test')||c.getAttribute('data-qa'));if(ti&&!l.testid)l.testid=ti;if(id&&!l.id){l.id=id;const p=id.split(/[_$]/);if(p.length>1)l.id_suffix=p[p.length-1];}if(nm&&!l.name_attr)l.name_attr=nm;if(l.id)break;}return l;}function isHidden(e){if(!e)return true;try{const s=window.getComputedStyle(e);if(s.display==='none'||s.visibility==='hidden')return true;}catch(_){}if(e.offsetParent===null&&e.tagName!=='BODY')return true;if(e.type&&e.type.toLowerCase()==='hidden')return true;return false;}function nearestHeading(e){let c=e?e.parentElement:null;for(let d=0;c&&d<6;d++,c=c.parentElement){if(c.tagName==='FIELDSET'){const l=c.querySelector(':scope > legend');if(l)return(l.textContent||'').trim();}const h=c.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > .panel-heading,:scope > .panel-title,:scope > .section-title');if(h)return(h.textContent||'').trim().split('\n')[0].trim();}return null;}const ROLES=new Set(['button','link','textbox','checkbox','radio','combobox','menuitem','tab','switch','searchbox','slider','spinbutton','option']);const SENRE=/\b(ssn|social.?security|password|dob|date.of.birth|birth.?date|pin|credit.?card|cvv|cvc)\b/i;const seen=new Set();const fields=[];document.querySelectorAll('*').forEach(el=>{const role=getRole(el);if(!role||!ROLES.has(role))return;if(isHidden(el))return;const loc=getLoc(el);const dk=loc.id||(role+'|'+getLabel(el));if(seen.has(dk))return;seen.add(dk);const label=getLabel(el);const section=nearestHeading(el);const entry={role,label};if(loc.id)entry.id=loc.id;if(loc.id_suffix&&loc.id_suffix!==loc.id)entry.id_suffix=loc.id_suffix;if(loc.name_attr)entry.name_attr=loc.name_attr;if(loc.testid)entry.testid=loc.testid;if(section)entry.section=section;if(role==='combobox'&&el.tagName==='SELECT'){const opts=Array.from(el.options).map(o=>(o.textContent||'').trim()).filter(t=>t);if(opts.length)entry.options=opts.slice(0,40);}if(SENRE.test(label||''))entry.sensitive=true;const rv=el.value!==undefined?String(el.value||''):'';if(role==='checkbox'||role==='radio'){entry.checked=el.checked;}else if(rv.trim()){entry.value='[REDACTED]';}fields.push(entry);});const actions=fields.filter(f=>f.role==='button'||f.role==='link').map(f=>f.label||'(unlabelled)').filter((v,i,a)=>v&&a.indexOf(v)===i);const secMap={};fields.forEach(f=>{const s=f.section||'(ungrouped)';if(!secMap[s])secMap[s]=[];const e=Object.assign({},f);delete e.section;secMap[s].push(e);});const out={meta:{url:location.href,title:document.title||'',timestamp:new Date().toISOString()},actions,sections:Object.entries(secMap).map(([heading,items])=>({heading,items}))};const json=JSON.stringify(out,null,2);console.log('%c── ASAP Powertools: Page Inspector ──','color:#39d3ff;font-weight:bold');console.log('%cCopy between the lines and paste into the chat.','color:#8b949e');console.log('---BEGIN---');console.log(json);console.log('---END---');return out;})();">🔍 Inspect Page</a>
+
+  <p style="color:#484f58;font-size:.8rem;margin:0;">Can't drag? Right-click the button → <em>Bookmark this link</em>.</p>
+</div>
+
+<div class="card">
+  <h2>Step 2 — Use it on any ASAP screen</h2>
+  <div class="step">
+    <div class="num">1</div>
+    <p>Navigate to any ASAP Connected screen.</p>
+  </div>
+  <div class="step">
+    <div class="num">2</div>
+    <p>Click <strong>🔍 Inspect Page</strong> in your bookmarks bar.</p>
+  </div>
+  <div class="step">
+    <div class="num">3</div>
+    <p>Press <code>F12</code> to open DevTools → Console tab.<br>
+       Copy the JSON block between <code>---BEGIN---</code> and <code>---END---</code>.</p>
+  </div>
+  <div class="step">
+    <div class="num">4</div>
+    <p>Paste it into the chat. Done.</p>
+  </div>
+
+  <div class="privacy">
+    <strong>🔒 Privacy guarantee:</strong> Field values are always replaced with <code>[REDACTED]</code>.
+    Only labels, element IDs, and page structure are captured — no student names, dates, IDs, or any other data.
+  </div>
+</div>
+
+<footer>ASAP Powertools by CJ &nbsp;★&nbsp; page_inspector_bookmarklet.html</footer>
+
+</body>
+</html>
