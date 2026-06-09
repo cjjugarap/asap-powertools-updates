@@ -422,6 +422,19 @@
           "label": "Remove",
           "id": "ContentPlaceHolder1_rptGroups_lnkDeleteCustomerGroup_0",
           "notes": "Removes a customer group from the student"
+        },
+        "transcripts_tab": {
+          "role": "tab",
+          "label": "Transcripts",
+          "notes": "Tab on student detail page. Click after Credits tab work to access View Transcript Report link.",
+          "id_unknown": true
+        },
+        "view_transcript_report": {
+          "role": "link",
+          "label": "View Transcript Report",
+          "section": "Transcripts tab",
+          "notes": "Opens the transcript report popup (CustomerTranscript.aspx) in a new window.",
+          "id_unknown": true
         }
       },
       "transitions": [
@@ -554,26 +567,34 @@
           "step": 6,
           "screen": "student_detail",
           "action": "click",
-          "element": "print_report",
-          "then": "transcript_report_popup",
-          "notes": "Opens the transcript report in a new popup window"
+          "element": "transcripts_tab",
+          "notes": "After Credits tab work is complete, switch to the Transcripts tab"
         },
         {
           "step": 7,
+          "screen": "student_detail",
+          "tab": "transcripts",
+          "action": "click",
+          "element": "view_transcript_report",
+          "notes": "Link inside the Transcripts tab — opens the report popup in a new window",
+          "then": "transcript_report_popup"
+        },
+        {
+          "step": 8,
           "screen": "transcript_report_popup",
           "action": "check",
           "elements": ["landscape", "display_diploma_date", "display_graduation_date"],
           "notes": "Ensure these three are checked. Uncheck others unless specifically needed."
         },
         {
-          "step": 8,
+          "step": 9,
           "screen": "transcript_report_popup",
           "action": "click",
           "element": "btn_filter",
           "notes": "Refreshes the popup with selected options applied"
         },
         {
-          "step": 9,
+          "step": 10,
           "screen": "transcript_report_popup",
           "action": "click",
           "element": "btn_export_to_print",
