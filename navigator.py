@@ -2504,6 +2504,33 @@ class BrowserWorker(threading.Thread):
             except Exception:
                 continue
 
+        # ---- last resort: search all other open pages (popup race) -----------
+        # When a click opens a popup window, active_page switches to the popup
+        # asynchronously. The very next step may run before the switch completes,
+        # finding nothing on the original page. Search every open page so steps
+        # targeting a popup (checkboxes, Filter, Print) are found even when
+        # active_page hasn't caught up yet. Switch active_page on a hit so all
+        # subsequent steps follow to the right window automatically.
+        try:
+            other_pages = [p for p in self.pages if p is not page]
+        except Exception:
+            other_pages = []
+        for other in other_pages:
+            el = self._resolve_by_locators(other, locators, role)
+            if el is None and name:
+                try:
+                    loc = other.get_by_role(role, name=name)
+                    res = first_visible(loc, nth)
+                    if res:
+                        el = res[0]
+                except Exception:
+                    pass
+            if el is not None:
+                self._dlog(f"  resolve: found on other page {other.url!r}; "
+                           f"switching active_page")
+                self.active_page = other
+                return el
+
         self._dlog("  resolve: no match anywhere")
         return None
 
