@@ -358,6 +358,38 @@
         "attendance": ["Service", "Date", "Time", "Staff", "Notes"],
         "tests": ["Test Name", "Student TestID", "Section", "Result", "Score", "Level", "Site", "Facility"]
       },
+      "tabs": {
+        "credits": {
+          "label": "Credits",
+          "notes": "Contains the Certificates & Programs section. Inspector cannot capture this tab's elements because the RadPageView panel remains display:none in the DOM even when active — IDs below were identified manually.",
+          "elements": {
+            "select_program": {
+              "role": "combobox",
+              "label": "Select Program",
+              "section": "Certificates & Programs",
+              "notes": "Selecting a program reveals the credit detail fields below. For transcript printing, choose 'High School Diploma'.",
+              "known_options": ["High School Diploma"]
+            },
+            "diploma_date": {
+              "role": "textbox",
+              "label": "Diploma Date",
+              "notes": "Date field revealed after selecting a program. Should be the LATER of the two dates. If Graduation Date > Diploma Date, the values were entered in the wrong fields — swap them before printing.",
+              "id_unknown": true
+            },
+            "graduation_date": {
+              "role": "textbox",
+              "label": "Graduation Date",
+              "notes": "Date field revealed after selecting a program. Should be the EARLIER of the two dates.",
+              "id_unknown": true
+            }
+          },
+          "data_correction_rule": {
+            "condition": "graduation_date > diploma_date",
+            "action": "swap diploma_date and graduation_date",
+            "reason": "Dates were originally entered in the wrong fields. Diploma Date must be >= Graduation Date for the transcript to print correctly."
+          }
+        }
+      },
       "elements": {
         "view_schedule": {
           "role": "link",
@@ -439,7 +471,13 @@
           "role": "button",
           "label": "(unlabelled — Print)",
           "id": "btnPrint",
-          "notes": "Sends transcript to printer / print dialog"
+          "notes": "Basic print button"
+        },
+        "btn_export_to_print": {
+          "role": "button",
+          "label": "Export to Print",
+          "id_unknown": true,
+          "notes": "The button used in the HSD transcript process. May only appear after clicking Filter. Run inspector on the post-Filter popup state to capture its ID."
         },
         "upload_second_logo": {
           "role": "link",
@@ -467,7 +505,83 @@
     }
   },
 
-  "processes": {},
+  "processes": {
+    "print_hsd_transcript": {
+      "name": "Print High School Diploma Transcript",
+      "description": "Search for a student, verify and correct diploma/graduation dates on the Credits tab, then print the HSD transcript with the correct display options.",
+      "steps": [
+        {
+          "step": 1,
+          "screen": "classic_home",
+          "action": "fill",
+          "element": "quick_search_input",
+          "value": "<student name or ID>",
+          "notes": "Set quick_search_type to 'Students' first if not already selected"
+        },
+        {
+          "step": 2,
+          "screen": "classic_home",
+          "action": "click",
+          "element": "quick_search_btn",
+          "then": "student_search_results"
+        },
+        {
+          "step": 3,
+          "screen": "student_search_results",
+          "action": "click",
+          "element": "View Details",
+          "notes": "Click View Details for the correct student row",
+          "then": "student_detail"
+        },
+        {
+          "step": 4,
+          "screen": "student_detail",
+          "tab": "credits",
+          "action": "select",
+          "element": "select_program",
+          "value": "High School Diploma",
+          "notes": "Reveals Diploma Date and Graduation Date fields"
+        },
+        {
+          "step": 5,
+          "screen": "student_detail",
+          "tab": "credits",
+          "action": "verify_and_correct",
+          "rule": "data_correction_rule",
+          "notes": "Read both date fields. If graduation_date > diploma_date, swap the values and save. Diploma Date must be the later date."
+        },
+        {
+          "step": 6,
+          "screen": "student_detail",
+          "action": "click",
+          "element": "print_report",
+          "then": "transcript_report_popup",
+          "notes": "Opens the transcript report in a new popup window"
+        },
+        {
+          "step": 7,
+          "screen": "transcript_report_popup",
+          "action": "check",
+          "elements": ["landscape", "display_diploma_date", "display_graduation_date"],
+          "notes": "Ensure these three are checked. Uncheck others unless specifically needed."
+        },
+        {
+          "step": 8,
+          "screen": "transcript_report_popup",
+          "action": "click",
+          "element": "btn_filter",
+          "notes": "Refreshes the popup with selected options applied"
+        },
+        {
+          "step": 9,
+          "screen": "transcript_report_popup",
+          "action": "click",
+          "element": "btn_export_to_print",
+          "notes": "Sends to print. btn_export_to_print may appear after filtering — map its ID on next inspection."
+        }
+      ]
+    }
+  },
 
   "meta": {
     "last_updated": "2026-06-09",
