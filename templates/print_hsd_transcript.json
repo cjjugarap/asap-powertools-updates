@@ -1,0 +1,107 @@
+{
+  "meta": {
+    "name": "Print HSD Transcript",
+    "process": "print_hsd_transcript",
+    "description": "Navigate to a student, correct diploma/graduation dates if swapped, then open the transcript popup with the correct print options (Landscape + Display Diploma Date + Display Graduation Date) and send to print.",
+    "variable": "studentid",
+    "notes": [
+      "Run as a batch from the navigator GUI: load this file, paste student IDs, click Run Batch.",
+      "The swap_dates step is automatic — it only changes the fields if graduation_date > diploma_date.",
+      "The final btnPrint click opens the browser print dialog, which requires manual confirmation.",
+      "The Credits tab 'Select Program' dropdown may be a Kendo/Telerik widget. If select_option fails, change its type to select_kendo."
+    ]
+  },
+  "steps": [
+    {
+      "type": "navigate",
+      "url": "https://app.asapconnected.com/StudentDetail.aspx?id={{studentid}}"
+    },
+    {
+      "type": "click",
+      "role": "link",
+      "name": "Credits",
+      "nth": 0,
+      "locators": {}
+    },
+    {
+      "type": "select_option",
+      "role": "combobox",
+      "name": "Select Program",
+      "nth": 0,
+      "label": "High School Diploma",
+      "locators": {}
+    },
+    {
+      "type": "swap_dates",
+      "diploma_suffix": "txtDiplomaDate",
+      "graduation_suffix": "txtGraduationDate"
+    },
+    {
+      "type": "click",
+      "role": "link",
+      "name": "Transcripts",
+      "nth": 0,
+      "locators": {}
+    },
+    {
+      "type": "click",
+      "role": "link",
+      "name": "View Transcript Report",
+      "nth": 0,
+      "locators": {
+        "id": "ContentPlaceHolder1_aTranscriptReport",
+        "id_suffix": "aTranscriptReport"
+      }
+    },
+    {
+      "type": "check",
+      "role": "checkbox",
+      "name": "Landscape",
+      "nth": 0,
+      "locators": {
+        "id": "LandscapeTranscript",
+        "id_suffix": "LandscapeTranscript"
+      }
+    },
+    {
+      "type": "check",
+      "role": "checkbox",
+      "name": "Display Diploma Date",
+      "nth": 0,
+      "locators": {
+        "id": "DisplayDiplomaDate",
+        "id_suffix": "DisplayDiplomaDate"
+      }
+    },
+    {
+      "type": "check",
+      "role": "checkbox",
+      "name": "Display Graduation Date",
+      "nth": 0,
+      "locators": {
+        "id": "DisplayGraduationDate",
+        "id_suffix": "DisplayGraduationDate"
+      }
+    },
+    {
+      "type": "click",
+      "role": "button",
+      "name": "",
+      "nth": 0,
+      "locators": {
+        "id": "btnFilter",
+        "id_suffix": "btnFilter"
+      }
+    },
+    {
+      "type": "click",
+      "role": "button",
+      "name": "",
+      "nth": 1,
+      "locators": {
+        "id": "btnPrint",
+        "id_suffix": "btnPrint"
+      }
+    }
+  ]
+}
