@@ -310,13 +310,14 @@
         "Full Name", "Email", "Phone", "Date of Birth", "Address", "Student ID"
       ],
       "row_actions": [
-        { "role": "link", "label": "Quick Enroll" },
-        { "role": "link", "label": "Email" },
-        { "role": "link", "label": "View Schedule" },
-        { "role": "link", "label": "View Details" },
-        { "role": "link", "label": "View Account" },
-        { "role": "link", "label": "Edit" }
+        { "role": "link", "label": "Quick Enroll", "id_suffix": "aReg", "id_pattern": "ctl00_ContentPlaceHolder1_rptStudents_ctrlN_aReg" },
+        { "role": "link", "label": "Email", "notes": "No stable id found" },
+        { "role": "link", "label": "View Schedule", "id_suffix": "btnViewSchedule", "id_pattern": "ctl00_ContentPlaceHolder1_rptStudents_ctrlN_btnViewSchedule" },
+        { "role": "link", "label": "View Details", "id_suffix": "lbtnViewDetails", "id_pattern": "ctl00_ContentPlaceHolder1_rptStudents_ctrlN_lbtnViewDetails" },
+        { "role": "link", "label": "View Account", "id_suffix": "lbViewAccount", "id_pattern": "ctl00_ContentPlaceHolder1_rptStudents_ctrlN_lbViewAccount" },
+        { "role": "link", "label": "Edit", "id_suffix": "lbEdit", "id_pattern": "ctl00_ContentPlaceHolder1_rptStudents_ctrlN_lbEdit" }
       ],
+      "repeater_pattern": "rptStudents_ctrlN — N is 0-based row index. id_suffix is stable across rows and data sets.",
       "page_controls": [
         { "role": "button", "label": "Advanced Search", "notes": "Opens advanced filter options" },
         { "role": "button", "label": "Add New", "notes": "Creates a new student record" },

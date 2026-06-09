@@ -181,6 +181,9 @@
   var SENSITIVE_RE = /\b(ssn|social.?security|password|dob|date.of.birth|birth.?date|pin|credit.?card|cvv|cvc)\b/i;
 
   var seen = new Set();
+  // For deduplicating repeating row actions: track (label+id_suffix) pairs
+  // so ctrl0_btnViewDetails and ctrl1_btnViewDetails collapse to one entry.
+  var seenRowActions = new Set();
   var fields = [];
   var suppressedCount = 0;
 
@@ -203,6 +206,16 @@
     var label = looksLikePii(rawLabel) ? '[REDACTED]' : rawLabel;
 
     var loc = getLoc(el);
+
+    // Deduplicate repeating row actions: ASP.NET Repeater generates ids like
+    // rptStudents_ctrl0_btnViewDetails, ctrl1_btnViewDetails, etc.
+    // Collapse these to a single representative entry using the id_suffix.
+    if (inDataRow && loc.id_suffix) {
+      var rowActionKey = role + '|' + label + '|' + loc.id_suffix;
+      if (seenRowActions.has(rowActionKey)) return;
+      seenRowActions.add(rowActionKey);
+    }
+
     var dk = loc.id || (role + '|' + label);
     if (seen.has(dk)) return;
     seen.add(dk);
