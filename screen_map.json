@@ -302,7 +302,7 @@
 
     "student_search_results": {
       "name": "Classic - Student Search Results",
-      "url_pattern": "app.asapconnected.com/Students.aspx",
+      "url_pattern": "app.asapconnected.com/Students.aspx?s=*",
       "title": "Students",
       "notes": "Repeating list of matching students. Each row contains student PII (full name, email, phone, DOB, address, student ID) plus a set of action links. The inspector suppresses all data-row text except known action labels to protect PII.",
       "pii_warning": "This screen contains student PII in every row. Never paste raw page content — always use the inspector which suppresses data rows automatically.",
