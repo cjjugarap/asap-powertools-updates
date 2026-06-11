@@ -1,12 +1,129 @@
 // ASAP Powertools — background service worker
-// Orchestrates batch runs: navigates tabs, injects step executors,
-// monitors downloads, and streams plain-English progress to the side panel.
+// Orchestrates batch runs, recording mode, and Claude cleanup.
 
 // ── Side panel ────────────────────────────────────────────────────────────────
 
 chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ windowId: tab.windowId });
 });
+
+// ── Recording state ───────────────────────────────────────────────────────────
+
+let rec = {
+  active: false,
+  tabId: null,
+  steps: [],
+};
+
+function startRecording(tabId) {
+  rec = { active: true, tabId: tabId, steps: [] };
+  injectRecorder(tabId);
+  // Re-inject whenever the tab navigates to a new page.
+  chrome.tabs.onUpdated.addListener(onTabUpdatedForRecording);
+}
+
+function stopRecording() {
+  rec.active = false;
+  chrome.tabs.onUpdated.removeListener(onTabUpdatedForRecording);
+  return rec.steps;
+}
+
+function onTabUpdatedForRecording(tabId, changeInfo) {
+  if (tabId === rec.tabId && changeInfo.status === 'complete') {
+    injectRecorder(tabId);
+  }
+}
+
+async function injectRecorder(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['recorder.js'],
+    });
+  } catch (e) {
+    console.warn('Recorder injection failed:', e.message);
+  }
+}
+
+// ── Claude cleanup ────────────────────────────────────────────────────────────
+
+async function cleanupWithClaude(rawSteps, processName, apiKey) {
+  const systemPrompt = `You are cleaning up a browser automation recording for ASAP Connected (a student management system built on ASP.NET WebForms with Telerik/Kendo UI).
+
+The recording was captured automatically and may contain noise. Return a clean, reliable automation template as a JSON array of steps.
+
+Rules:
+1. Remove duplicate consecutive navigate steps to the same URL.
+2. Remove navigate steps that are postback reloads (same URL as the previous navigate, or same as the page_url of the previous action step).
+3. For locators, prefer id_suffix over full id (more stable across ASP.NET viewstate). Drop locators that are empty.
+4. All fill step values are already [REDACTED] — keep them as-is.
+5. If you see fill or click steps touching fields whose id_suffix matches "txtDiplomaDate" or "txtGraduationDate", replace them with a single step: {"type":"swap_dates","diploma_suffix":"txtDiplomaDate","graduation_suffix":"txtGraduationDate"}
+6. Remove any steps where name or locators are completely empty and the step can't be identified.
+7. Return ONLY a valid JSON array — no explanation, no markdown, no code fences.
+
+Step schema (only include fields that are present):
+{"type":"navigate"|"click"|"select_option"|"select_kendo"|"check"|"fill"|"swap_dates"|"download"|"close_page",
+ "role":"button"|"link"|"combobox"|"checkbox"|"textbox",
+ "name":"visible label",
+ "nth":0,
+ "locators":{"id":"...","id_suffix":"...","name_attr":"...","name_suffix":"..."},
+ "value":"option value or [REDACTED]",
+ "label":"visible option text"}`;
+
+  const userPrompt = `Process name: "${processName}"
+
+Raw recorded steps:
+${JSON.stringify(rawSteps, null, 2)}`;
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    }),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Claude API error ${resp.status}: ${err}`);
+  }
+
+  const data = await resp.json();
+  const text = data.content[0].text.trim();
+
+  // Strip any accidental markdown fences.
+  const json = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+  return JSON.parse(json);
+}
+
+// ── Process storage ───────────────────────────────────────────────────────────
+
+async function saveProcess(proc) {
+  const { processes = [] } = await chrome.storage.local.get('processes');
+  // Replace if name already exists, otherwise append.
+  const idx = processes.findIndex(p => p.id === proc.id);
+  if (idx >= 0) processes[idx] = proc;
+  else processes.push(proc);
+  await chrome.storage.local.set({ processes });
+}
+
+async function deleteProcess(id) {
+  const { processes = [] } = await chrome.storage.local.get('processes');
+  await chrome.storage.local.set({ processes: processes.filter(p => p.id !== id) });
+}
+
+async function getSavedProcesses() {
+  const { processes = [] } = await chrome.storage.local.get('processes');
+  return processes;
+}
 
 // ── Batch state ───────────────────────────────────────────────────────────────
 
@@ -47,9 +164,10 @@ function log(text, tag = 'info') {
 
 // ── Message router ────────────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg._source === 'background') return; // ignore our own broadcasts
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg._source === 'background') return;
 
+  // ── Batch run ──
   if (msg.type === 'run_batch') {
     runBatch(msg.template, msg.studentIds).catch(err => {
       log('Unexpected error: ' + err.message, 'err');
@@ -67,8 +185,83 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // ── Templates (bundled + saved) ──
   if (msg.type === 'get_templates') {
-    loadTemplates().then(t => sendResponse({ templates: t })).catch(() => sendResponse({ templates: [] }));
+    Promise.all([loadTemplates(), getSavedProcesses()]).then(([bundled, saved]) => {
+      sendResponse({ templates: [...bundled, ...saved] });
+    }).catch(() => sendResponse({ templates: [] }));
+    return true;
+  }
+
+  // ── Recording ──
+  if (msg.type === 'start_recording') {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        startRecording(tabs[0].id);
+        sendResponse({ ok: true });
+      } else {
+        sendResponse({ ok: false, err: 'No active tab found' });
+      }
+    });
+    return true;
+  }
+
+  if (msg.type === 'stop_recording') {
+    const steps = stopRecording();
+    sendResponse({ ok: true, steps });
+    return true;
+  }
+
+  if (msg.type === 'recorded_step') {
+    // From recorder.js content script — forward to panel.
+    if (rec.active) {
+      rec.steps.push(msg.step);
+      toPanel({ type: 'recorded_step', step: msg.step });
+    }
+    return false;
+  }
+
+  // ── Claude cleanup ──
+  if (msg.type === 'cleanup_with_claude') {
+    chrome.storage.local.get('apiKey', ({ apiKey }) => {
+      if (!apiKey) {
+        sendResponse({ ok: false, err: 'No API key set. Open Settings to add your Anthropic API key.' });
+        return;
+      }
+      cleanupWithClaude(msg.steps, msg.name, apiKey)
+        .then(cleanSteps => sendResponse({ ok: true, steps: cleanSteps }))
+        .catch(err => sendResponse({ ok: false, err: err.message }));
+    });
+    return true;
+  }
+
+  // ── Process save / delete ──
+  if (msg.type === 'save_process') {
+    saveProcess(msg.process)
+      .then(() => sendResponse({ ok: true }))
+      .catch(err => sendResponse({ ok: false, err: err.message }));
+    return true;
+  }
+
+  if (msg.type === 'delete_process') {
+    deleteProcess(msg.id)
+      .then(() => sendResponse({ ok: true }))
+      .catch(err => sendResponse({ ok: false, err: err.message }));
+    return true;
+  }
+
+  // ── Settings ──
+  if (msg.type === 'save_settings') {
+    chrome.storage.local.set({ apiKey: msg.apiKey })
+      .then(() => sendResponse({ ok: true }))
+      .catch(err => sendResponse({ ok: false, err: err.message }));
+    return true;
+  }
+
+  if (msg.type === 'get_settings') {
+    chrome.storage.local.get('apiKey', ({ apiKey }) => {
+      sendResponse({ apiKey: apiKey || '' });
+    });
     return true;
   }
 });
