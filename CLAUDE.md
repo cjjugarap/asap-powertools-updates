@@ -30,6 +30,31 @@ For each step in a process being mapped:
 
 ---
 
+## PII Protection — Non-Negotiable Design Constraint
+
+No personally identifiable information is ever captured, stored, transmitted, or logged anywhere in this pipeline. This applies to every component and every future feature.
+
+### Inspector (mapping side)
+- Field **values** are always replaced with `[REDACTED]` — never stored
+- Data rows (student names, emails, phones, DOBs, addresses, IDs) are suppressed entirely from output
+- Only labels, element IDs, and page structure are captured
+- Regex backstop catches anything that slips through (email patterns, phone shapes, SSN, DOB formats)
+
+### Navigator (recording side)
+- `isSecretField()` detects password/OTP/credit card fields — values are withheld from the recording JSON and flagged for the encrypted credentials store instead
+- The recorder captures field values only on `change`, and only for non-sensitive fields
+- The encrypted credentials store (PBKDF2 + Fernet AES) never leaves the local machine
+
+### LLM cleanup step (planned)
+- Before any recording is sent to Claude for path cleaning, all `fill` step values must be stripped to `[REDACTED]`
+- Only step types and element identifiers (role, label, ID) travel to the API — never field contents
+
+### Rule
+> **The full pipeline — inspect → record → clean → replay — must be PII-free end to end.**
+> If a future feature would require capturing a real value to function, it must use the local encrypted credentials store, not plaintext storage or any external service.
+
+---
+
 ## Key Files
 
 | File | Purpose |
