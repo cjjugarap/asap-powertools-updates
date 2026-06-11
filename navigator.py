@@ -3201,173 +3201,447 @@ class AboutDialog(tk.Toplevel):
 
 
 class App:
+    # ---- Colour palette ---------------------------------------------------
+    BG      = "#0d1117"
+    SURFACE = "#161b22"
+    BORDER  = "#30363d"
+    TEXT    = "#e6edf3"
+    MUTED   = "#8b949e"
+    ACCENT  = "#39d3ff"
+    GREEN   = "#3fb950"
+    YELLOW  = "#ffd23f"
+    RED     = "#f85149"
+
     def __init__(self, root):
         self.root = root
-        root.title("ASAP Powertools — by CJ")
-        root.geometry("1100x650")
+        root.title("ASAP Powertools")
+        root.geometry("1120x680")
+        root.configure(bg=self.BG)
+        root.minsize(900, 580)
 
         self.cmd_q = queue.Queue()
         self.result_q = queue.Queue()
         self.worker = BrowserWorker(self.cmd_q, self.result_q)
         self.worker.start()
 
+        # Engine state — same fields as before.
         self.elements = []
         self.steps = []
         self.highlighted_idx = None
         self.highlight_after = None
-        self.capture_secrets = False  # default: redact passwords etc.
-        self.last_download_path = None  # for click-to-open in status bar
-        self._batch_monitor = None  # live batch progress window (Phase 3)
-        self._dark = False          # dark theme toggle state (Phase 3)
+        self.capture_secrets = False
+        self.last_download_path = None
+        self._batch_monitor = None
+        self._dark = True
 
-        # Replay state.
         self.credentials = CredentialsStore()
         self.replaying = False
-        self.replay_steps_in_flight = []  # the steps being executed
-        self._pending_insert = None  # element-insert awaiting locator lookup
+        self.replay_steps_in_flight = []
+        self._pending_insert = None
+        self._last_step_sel = None
+
+        # Dashboard state.
+        self._selected_process = None   # dict with keys: name, description, steps, path
+        self._loaded_processes = []     # [{path, name, description, steps}, ...]
+        self._ui_state = "idle"         # "idle" | "recording" | "running"
+
+        self.url_var = tk.StringVar(value="https://admin.asapconnected.com/home")
+        self.replay_progress_var = tk.StringVar(value="")
+        self.capture_secrets_var = tk.BooleanVar(value=False)
 
         self._build_ui()
         self._bind_shortcuts()
+        self._load_processes()
         self._poll_results()
 
-        # Auto-navigate to whatever URL is pre-filled in the URL bar. Small
-        # delay so the worker thread has time to launch Chromium first.
+        # Auto-navigate after Chromium launches.
         self.root.after(500, self.on_go)
 
+    # ================================================================== #
+    #  UI construction                                                   #
+    # ================================================================== #
+
+    def _mk_label(self, parent, text, fg=None, font=None, **kw):
+        return tk.Label(parent, text=text,
+                        bg=parent.cget("bg") if hasattr(parent, "cget") else self.BG,
+                        fg=fg or self.TEXT,
+                        font=font or ("Segoe UI", 9),
+                        **kw)
+
+    def _mk_btn(self, parent, text, command, bg=None, fg=None, font=None,
+                padx=14, pady=5, relief="flat", cursor="hand2", **kw):
+        b = tk.Button(parent, text=text, command=command,
+                      bg=bg or self.SURFACE,
+                      fg=fg or self.TEXT,
+                      activebackground=self.ACCENT,
+                      activeforeground=self.BG,
+                      font=font or ("Segoe UI", 9),
+                      padx=padx, pady=pady, relief=relief,
+                      cursor=cursor, bd=0, highlightthickness=1,
+                      highlightbackground=self.BORDER,
+                      **kw)
+        return b
+
     def _build_ui(self):
-        # Top: URL bar + nav buttons
-        top = ttk.Frame(self.root, padding=8)
-        top.pack(fill="x")
+        C = self  # colour palette shorthand
 
-        ttk.Label(top, text="URL:").pack(side="left")
-        self.url_var = tk.StringVar(value="https://admin.asapconnected.com/home")
-        self.url_entry = ttk.Entry(top, textvariable=self.url_var)
-        self.url_entry.pack(side="left", fill="x", expand=True, padx=6)
+        # ---- Outer layout: left panel | right area ----
+        outer = tk.Frame(self.root, bg=C.BG)
+        outer.pack(fill="both", expand=True)
+
+        # ---- Left panel (~280px fixed) ----
+        left_panel = tk.Frame(outer, bg=C.SURFACE, width=280)
+        left_panel.pack(side="left", fill="y")
+        left_panel.pack_propagate(False)
+
+        # App title
+        tk.Label(left_panel, text="ASAP Powertools",
+                 bg=C.SURFACE, fg=C.ACCENT,
+                 font=("Segoe UI", 13, "bold"),
+                 anchor="w").pack(fill="x", padx=14, pady=(16, 2))
+
+        # Horizontal rule
+        tk.Frame(left_panel, bg=C.BORDER, height=1).pack(fill="x", padx=8, pady=4)
+
+        # Processes heading
+        tk.Label(left_panel, text="YOUR PROCESSES",
+                 bg=C.SURFACE, fg=C.MUTED,
+                 font=("Segoe UI", 7, "bold"),
+                 anchor="w").pack(fill="x", padx=14, pady=(6, 4))
+
+        # Scrollable process list frame
+        self._proc_list_frame = tk.Frame(left_panel, bg=C.SURFACE)
+        self._proc_list_frame.pack(fill="x")
+
+        # Separator + "Set up a new process" link
+        tk.Frame(left_panel, bg=C.BORDER, height=1).pack(fill="x", padx=8, pady=8)
+        new_proc_btn = tk.Label(left_panel,
+                                text="+ Set up a new process",
+                                bg=C.SURFACE, fg=C.ACCENT,
+                                font=("Segoe UI", 9),
+                                cursor="hand2", anchor="w")
+        new_proc_btn.pack(fill="x", padx=14, pady=2)
+        new_proc_btn.bind("<Button-1>", lambda e: self._on_new_process())
+
+        # Separator before footer stats
+        tk.Frame(left_panel, bg=C.BORDER, height=1).pack(fill="x", padx=8, pady=8)
+
+        self._left_footer_var = tk.StringVar(value="")
+        tk.Label(left_panel, textvariable=self._left_footer_var,
+                 bg=C.SURFACE, fg=C.MUTED,
+                 font=("Segoe UI", 8),
+                 anchor="w").pack(fill="x", padx=14, pady=(0, 12))
+
+        # ---- Right area ----
+        right_area = tk.Frame(outer, bg=C.BG)
+        right_area.pack(side="left", fill="both", expand=True)
+
+        # Subtle URL bar at the top of the right area
+        url_bar = tk.Frame(right_area, bg=C.SURFACE)
+        url_bar.pack(fill="x")
+        tk.Label(url_bar, text="URL", bg=C.SURFACE, fg=C.MUTED,
+                 font=("Segoe UI", 8)).pack(side="left", padx=(10, 4), pady=5)
+        self.url_entry = tk.Entry(url_bar, textvariable=self.url_var,
+                                  bg=C.SURFACE, fg=C.MUTED,
+                                  insertbackground=C.MUTED,
+                                  relief="flat", font=("Segoe UI", 8),
+                                  highlightthickness=0)
+        self.url_entry.pack(side="left", fill="x", expand=True, pady=5)
         self.url_entry.bind("<Return>", lambda e: self.on_go())
+        go_lbl = tk.Label(url_bar, text="Go", bg=C.SURFACE, fg=C.ACCENT,
+                          font=("Segoe UI", 8), cursor="hand2", padx=8)
+        go_lbl.pack(side="left", pady=5)
+        go_lbl.bind("<Button-1>", lambda e: self.on_go())
 
-        ttk.Button(top, text="Go", command=self.on_go).pack(side="left")
-        ttk.Button(top, text="Back",
-                   command=lambda: self._send({"action": "back"})).pack(side="left", padx=4)
-        ttk.Button(top, text="Reload",
-                   command=lambda: self._send({"action": "reload"})).pack(side="left")
-        ttk.Button(top, text="Re-scan",
-                   command=lambda: self._send({"action": "rescan"})).pack(side="left", padx=4)
-        ttk.Button(top, text="Downloads",
-                   command=self._open_downloads_folder).pack(side="left")
-        ttk.Button(top, text="Output folder...",
-                   command=self._change_output_folder).pack(side="left", padx=4)
-        ttk.Button(top, text="Merge PDFs",
-                   command=self._on_merge_pdfs).pack(side="left")
+        # Activity feed (fills the middle)
+        feed_frame = tk.Frame(right_area, bg=C.BG)
+        feed_frame.pack(fill="both", expand=True, padx=0)
 
-        # Capture-secrets toggle (off by default)
-        self.capture_secrets_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            top,
-            text="Capture secret values (UNSAFE)",
-            variable=self.capture_secrets_var,
-            command=self._on_toggle_capture_secrets,
-        ).pack(side="left", padx=12)
+        self._feed = tk.Text(
+            feed_frame,
+            bg=C.BG, fg=C.TEXT,
+            font=("Segoe UI", 10),
+            relief="flat", bd=0,
+            state="disabled",
+            wrap="word",
+            cursor="arrow",
+            highlightthickness=0,
+            padx=20, pady=16,
+            spacing3=4,
+        )
+        feed_sb = tk.Scrollbar(feed_frame, orient="vertical",
+                               command=self._feed.yview,
+                               bg=C.SURFACE, troughcolor=C.BG,
+                               relief="flat", bd=0)
+        self._feed.config(yscrollcommand=feed_sb.set)
+        feed_sb.pack(side="right", fill="y")
+        self._feed.pack(side="left", fill="both", expand=True)
 
-        # Middle: two panes
-        middle = ttk.PanedWindow(self.root, orient="horizontal")
-        middle.pack(fill="both", expand=True, padx=8, pady=4)
+        # Feed text tags
+        self._feed.tag_configure("muted",   foreground=C.MUTED)
+        self._feed.tag_configure("green",   foreground=C.GREEN)
+        self._feed.tag_configure("yellow",  foreground=C.YELLOW)
+        self._feed.tag_configure("red",     foreground=C.RED)
+        self._feed.tag_configure("accent",  foreground=C.ACCENT)
+        self._feed.tag_configure("bold",    font=("Segoe UI", 10, "bold"))
 
-        # Left: live elements
-        left = ttk.Frame(middle)
-        middle.add(left, weight=1)
-        ttk.Label(left, text="Elements on this page (highlighted when used):").pack(anchor="w")
-        lwrap = ttk.Frame(left)
-        lwrap.pack(fill="both", expand=True)
-        self.el_list = tk.Listbox(lwrap, activestyle="dotbox",
-                                  exportselection=False)
-        self.el_list.pack(side="left", fill="both", expand=True)
-        sb1 = ttk.Scrollbar(lwrap, orient="vertical", command=self.el_list.yview)
-        sb1.pack(side="right", fill="y")
-        self.el_list.config(yscrollcommand=sb1.set)
-        # Insert the selected element as a recorded step. Double-click does
-        # the same thing for convenience.
-        ttk.Button(left, text="→ Insert selected element as step",
-                   command=self.insert_element_as_step).pack(anchor="w", pady=(4, 0))
-        self.el_list.bind("<Double-Button-1>",
-                          lambda e: self.insert_element_as_step())
+        # Initial idle message
+        self._append_feed(
+            "Open a student's page in the browser to get started, "
+            "or choose a process on the left.",
+            tag="muted")
 
-        # Right: recorded steps
-        right = ttk.Frame(middle)
-        middle.add(right, weight=1)
-        ttk.Label(right, text="Recorded steps (double-click to edit):").pack(anchor="w")
-        rwrap = ttk.Frame(right)
-        rwrap.pack(fill="both", expand=True)
-        self.step_list = tk.Listbox(
-            rwrap, activestyle="dotbox",
-            # Don't surrender the selection when another widget (the element
-            # list) is clicked, and keep the highlight a visible color instead
-            # of letting Tk grey it out when the list loses focus.
-            exportselection=False,
-            selectbackground="#0a5ed8", selectforeground="white")
-        self.step_list.pack(side="left", fill="both", expand=True)
-        sb2 = ttk.Scrollbar(rwrap, orient="vertical", command=self.step_list.yview)
-        sb2.pack(side="right", fill="y")
-        self.step_list.config(yscrollcommand=sb2.set)
-        self.step_list.bind("<Double-Button-1>", self.on_edit_step)
-        # Remember the most recently selected step so "Insert selected element
-        # as step" can place the new step right after it — even if focus later
-        # moves to the element list and the visible highlight clears.
-        self._last_step_sel = None
+        # ---- Bottom action bar ----
+        self._action_bar = tk.Frame(right_area, bg=C.SURFACE, height=54)
+        self._action_bar.pack(fill="x", side="bottom")
+        self._action_bar.pack_propagate(False)
+
+        # We build buttons into this; rebuilt by _refresh_action_bar.
+        self._build_action_bar_idle()
+
+        # Progress label inside the bar
+        self._progress_var = tk.StringVar(value="")
+        self._progress_lbl = tk.Label(self._action_bar,
+                                      textvariable=self._progress_var,
+                                      bg=C.SURFACE, fg=C.MUTED,
+                                      font=("Segoe UI", 9))
+        self._progress_lbl.pack(side="right", padx=18, pady=14)
+
+        # Hidden step_list so existing helpers (save_steps, load_steps,
+        # on_edit_step, etc.) keep working without touching the feed.
+        # It just lives off-screen — never packed into the visible layout.
+        _hidden = tk.Frame(self.root)
+        self.step_list = tk.Listbox(_hidden, exportselection=False)
         self.step_list.bind("<<ListboxSelect>>", self._remember_step_sel)
+        # el_list is also needed by insert_element_as_step.
+        self.el_list = tk.Listbox(_hidden, exportselection=False)
 
-        btn = ttk.Frame(right)
-        btn.pack(fill="x", pady=4)
-        ttk.Button(btn, text="↑", width=3,
-                   command=lambda: self.move_step(-1)).pack(side="left")
-        ttk.Button(btn, text="↓", width=3,
-                   command=lambda: self.move_step(1)).pack(side="left")
-        ttk.Button(btn, text="Edit", command=self.on_edit_step).pack(side="left", padx=4)
-        ttk.Button(btn, text="Insert...", command=self.insert_step).pack(side="left")
-        ttk.Button(btn, text="Delete", command=self.delete_step).pack(side="left", padx=4)
-        ttk.Button(btn, text="Clear all", command=self.clear_steps).pack(side="left", padx=4)
-        ttk.Button(btn, text="Save...", command=self.save_steps).pack(side="right")
-        ttk.Button(btn, text="Load...", command=self.load_steps).pack(side="right", padx=4)
+    # ---- Process panel helpers ----
 
-        # Second row of controls dedicated to replay.
-        btn2 = ttk.Frame(right)
-        btn2.pack(fill="x", pady=(0, 4))
-        self.replay_btn = ttk.Button(btn2, text="▶ Replay",
-                                     command=self.on_replay)
-        self.replay_btn.pack(side="left")
-        ttk.Button(btn2, text="Preview",
-                   command=self.on_preview).pack(side="left", padx=4)
-        ttk.Button(btn2, text="Credentials...",
-                   command=self.on_manage_credentials).pack(side="left", padx=4)
-        ttk.Button(btn2, text="Insert date-swap",
-                   command=self.insert_swap_dates).pack(side="left", padx=4)
-        ttk.Button(btn2, text="Batch...",
-                   command=self.on_batch).pack(side="left", padx=4)
-        ttk.Button(btn2, text="Resolve emails...",
-                   command=self.on_resolve).pack(side="left", padx=4)
-        # Stop an in-progress batch/resolve. Disabled until a run is running.
-        self.stop_btn = ttk.Button(btn2, text="■ Stop",
-                                   command=self.on_stop, state="disabled")
+    def _load_processes(self):
+        """Read templates/*.json and populate the left panel."""
+        self._loaded_processes = []
+        tdir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "templates")
+        try:
+            if os.path.isdir(tdir):
+                for fn in sorted(os.listdir(tdir)):
+                    if not fn.endswith(".json"):
+                        continue
+                    path = os.path.join(tdir, fn)
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        meta = data.get("meta", {})
+                        steps = data.get("steps", [])
+                        self._loaded_processes.append({
+                            "path": path,
+                            "name": meta.get("name", fn),
+                            "description": meta.get("description", ""),
+                            "steps": steps,
+                        })
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        self._rebuild_process_list()
+
+    def _rebuild_process_list(self):
+        """Re-draw the process cards in the left panel."""
+        for w in self._proc_list_frame.winfo_children():
+            w.destroy()
+
+        for proc in self._loaded_processes:
+            self._add_process_card(proc)
+
+        # Footer: screen count + process count
+        n_screens = len(self.elements)
+        n_proc = len(self._loaded_processes)
+        self._left_footer_var.set(
+            f"{n_screens} screen{'s' if n_screens != 1 else ''} mapped  "
+            f"|  {n_proc} process{'es' if n_proc != 1 else ''}")
+
+    def _add_process_card(self, proc):
+        """Add one clickable process card to the left panel."""
+        C = self
+        is_selected = (self._selected_process is not None
+                       and proc["path"] == self._selected_process.get("path"))
+        card_bg = "#1f2937" if is_selected else C.SURFACE
+        border_col = C.ACCENT if is_selected else C.SURFACE
+
+        card = tk.Frame(self._proc_list_frame, bg=card_bg,
+                        highlightbackground=border_col,
+                        highlightthickness=1)
+        card.pack(fill="x", padx=10, pady=3)
+
+        # Arrow indicator
+        arrow = "▶ " if is_selected else "  "
+        name_lbl = tk.Label(card, text=arrow + proc["name"],
+                            bg=card_bg,
+                            fg=C.ACCENT if is_selected else C.TEXT,
+                            font=("Segoe UI", 9, "bold"),
+                            anchor="w", padx=8, pady=6)
+        name_lbl.pack(fill="x")
+
+        if proc["description"]:
+            # Wrap description to ~36 chars per line for the narrow panel.
+            desc = proc["description"]
+            if len(desc) > 120:
+                desc = desc[:117] + "..."
+            desc_lbl = tk.Label(card, text=desc,
+                                bg=card_bg, fg=C.MUTED,
+                                font=("Segoe UI", 8),
+                                anchor="w", justify="left",
+                                wraplength=240, padx=12, pady=(0, 8))
+            desc_lbl.pack(fill="x")
+        else:
+            desc_lbl = None
+
+        def on_click(event=None, p=proc):
+            self._select_process(p)
+
+        for widget in [card, name_lbl] + ([desc_lbl] if desc_lbl else []):
+            widget.bind("<Button-1>", on_click)
+            widget.config(cursor="hand2")
+
+    def _select_process(self, proc):
+        """Select a process card and load its steps."""
+        self._selected_process = proc
+        self.steps = [dict(s) for s in proc["steps"]]
+        # Sync the hidden step_list so save/load helpers are consistent.
+        self.step_list.delete(0, tk.END)
+        for s in self.steps:
+            self.step_list.insert(tk.END, format_step(s))
+        self._rebuild_process_list()
+        self._refresh_action_bar()
+        self._append_feed(
+            f"Selected: {proc['name']}  ({len(self.steps)} steps loaded).",
+            tag="accent")
+
+    def _on_new_process(self):
+        messagebox.showinfo(
+            "Set up a new process",
+            "To create a new process:\n\n"
+            "1. Use Advanced tools to open the step recorder.\n"
+            "2. Perform the browser actions once.\n"
+            "3. Save to templates/ as a JSON file.\n\n"
+            "The process will appear here next time you launch.")
+
+    # ---- Action bar ----
+
+    def _clear_action_bar(self):
+        for w in self._action_bar.winfo_children():
+            if w is not self._progress_lbl:
+                w.destroy()
+
+    def _build_action_bar_idle(self):
+        self._clear_action_bar()
+        C = self
+        btn_frame = tk.Frame(self._action_bar, bg=C.SURFACE)
+        btn_frame.pack(side="left", padx=14, pady=10)
+
+        self._mk_btn(btn_frame, "Watch me do it",
+                     command=self._on_watch_me,
+                     bg=C.SURFACE).pack(side="left", padx=4)
+        self._mk_btn(btn_frame, "Run for one student",
+                     command=self._on_run_one,
+                     bg=C.SURFACE).pack(side="left", padx=4)
+        self._mk_btn(btn_frame, "Run for everyone",
+                     command=self._on_run_everyone,
+                     bg=C.SURFACE).pack(side="left", padx=4)
+
+        # Advanced (always present)
+        self._mk_btn(btn_frame, "⚙ Advanced",
+                     command=self._on_advanced,
+                     bg=C.SURFACE, fg=C.MUTED).pack(side="left", padx=(16, 4))
+
+        # About button (right side)
+        self._mk_btn(self._action_bar, "★ About",
+                     command=self.on_about,
+                     bg=C.SURFACE, fg=C.MUTED,
+                     padx=8).pack(side="right", padx=14, pady=14)
+
+    def _build_action_bar_recording(self):
+        self._clear_action_bar()
+        C = self
+        btn_frame = tk.Frame(self._action_bar, bg=C.SURFACE)
+        btn_frame.pack(side="left", padx=14, pady=10)
+
+        self._mk_btn(btn_frame, "Stop recording",
+                     command=self._on_stop_recording,
+                     bg=C.RED, fg="#fff",
+                     font=("Segoe UI", 9, "bold"),
+                     padx=18).pack(side="left", padx=4)
+        self._mk_btn(btn_frame, "⚙ Advanced",
+                     command=self._on_advanced,
+                     bg=C.SURFACE, fg=C.MUTED).pack(side="left", padx=(16, 4))
+
+    def _build_action_bar_running(self):
+        self._clear_action_bar()
+        C = self
+        btn_frame = tk.Frame(self._action_bar, bg=C.SURFACE)
+        btn_frame.pack(side="left", padx=14, pady=10)
+
+        self.stop_btn = self._mk_btn(
+            btn_frame, "Stop",
+            command=self.on_stop,
+            bg=C.RED, fg="#fff",
+            font=("Segoe UI", 9, "bold"),
+            padx=18)
         self.stop_btn.pack(side="left", padx=4)
-        # Progress indicator: shown during replay.
-        self.replay_progress_var = tk.StringVar(value="")
-        ttk.Label(btn2, textvariable=self.replay_progress_var,
-                  foreground="#0a5ed8").pack(side="left", padx=8)
-        # Credit / About — far right of the replay row.
-        ttk.Button(btn2, text="★ About",
-                   command=self.on_about).pack(side="right", padx=4)
-        ttk.Button(btn2, text="🌙 Theme",
-                   command=self.toggle_theme).pack(side="right", padx=4)
+        self._mk_btn(btn_frame, "⚙ Advanced",
+                     command=self._on_advanced,
+                     bg=C.SURFACE, fg=C.MUTED).pack(side="left", padx=(16, 4))
 
-        # Status bar — doubles as a clickable shortcut to the last download.
-        self.status_var = tk.StringVar(
-            value="Ready. Enter a URL and press Go.   ·   ASAP Powertools by CJ ★")
-        self.status_label = ttk.Label(
-            self.root, textvariable=self.status_var, anchor="w",
-            padding=6, relief="sunken")
-        self.status_label.pack(side="bottom", fill="x")
-        self.status_label.bind("<Button-1>", self._on_status_click)
+    def _refresh_action_bar(self):
+        if self._ui_state == "idle":
+            self._build_action_bar_idle()
+        elif self._ui_state == "recording":
+            self._build_action_bar_recording()
+        elif self._ui_state == "running":
+            self._build_action_bar_running()
 
-    # ----- UI events -----
+    def _set_state(self, state, progress=""):
+        self._ui_state = state
+        self._refresh_action_bar()
+        self._progress_var.set(progress)
+
+    # ---- Activity feed ----
+
+    def _append_feed(self, text, tag=None):
+        """Append a line to the activity feed."""
+        self._feed.config(state="normal")
+        # Clear the idle placeholder on first real message.
+        if self._feed.get("1.0", "end-1c").startswith(
+                "Open a student's page"):
+            self._feed.delete("1.0", tk.END)
+        if self._feed.index("end-1c") != "1.0":
+            self._feed.insert(tk.END, "\n")
+        if tag:
+            self._feed.insert(tk.END, text, tag)
+        else:
+            self._feed.insert(tk.END, text)
+        self._feed.see(tk.END)
+        self._feed.config(state="disabled")
+
+    def _set_status(self, text, clickable=False):
+        """Compatibility shim — write to the feed instead of a status bar.
+        clickable=True is honoured by marking the last download path."""
+        if text and not text.endswith("..."):
+            # Filter pure noise (action names like "goto...")
+            noise = {
+                "goto...", "back...", "reload...", "rescan...",
+                "set_output_dir...", "lookup_locators...",
+                "resolve_run...", "batch_run...", "replay...",
+                "replay_resume...",
+            }
+            if text.strip() in noise:
+                return
+        self._append_feed(text)
+
+    # ================================================================== #
+    #  UI events                                                          #
+    # ================================================================== #
 
     def on_go(self):
         url = self.url_var.get().strip()
@@ -3376,35 +3650,116 @@ class App:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
             self.url_var.set(url)
-        self._send({"action": "goto", "url": url})
+        self.cmd_q.put({"action": "goto", "url": url})
 
     def _send(self, cmd):
         self.cmd_q.put(cmd)
-        self._set_status(f"{cmd['action']}...")
-
-    def _set_status(self, text, clickable=False):
-        """Update the status bar and switch styling.
-
-        clickable=True means the message refers to a download the user can
-        open by clicking the bar. Any other status update resets the
-        styling so the bar doesn't keep looking like a link.
-        """
-        self.status_var.set(text)
-        try:
-            if clickable:
-                self.status_label.config(foreground="#0a5ed8", cursor="hand2")
-            else:
-                self.status_label.config(foreground="", cursor="")
-        except Exception:
-            pass
 
     def _dlog(self, msg):
-        """App-side diagnostic log. Mirrors BrowserWorker._dlog so UI-thread
-        code (e.g. the postback-suppression branch in _on_navigation) can log
-        too — App previously had no _dlog, so that path raised AttributeError."""
         core.dlog(msg)
 
-    # ----- Worker results -----
+    # ---- Dashboard button handlers ----
+
+    def _on_watch_me(self):
+        """Start recording mode — user drives the browser, we record steps."""
+        if self.replaying:
+            messagebox.showinfo("Busy", "A run is already in progress.")
+            return
+        # Clear existing steps for a fresh recording.
+        if self.steps and not messagebox.askyesno(
+                "Start new recording?",
+                f"This will clear the {len(self.steps)} existing step(s) "
+                f"and start a fresh recording. Continue?"):
+            return
+        self.steps = []
+        self.step_list.delete(0, tk.END)
+        self._last_step_sel = None
+        self._ui_state = "recording"
+        self._refresh_action_bar()
+        self._append_feed("Recording started. Perform the actions in the browser.", tag="accent")
+        self._append_feed("When you're done, click Stop recording.", tag="muted")
+
+    def _on_stop_recording(self):
+        """End recording mode and offer to save."""
+        self._ui_state = "idle"
+        self._refresh_action_bar()
+        n = len(self.steps)
+        self._append_feed(f"Recording stopped. {n} step(s) captured.", tag="green")
+        if n > 0:
+            save_now = messagebox.askyesno(
+                "Save recording?",
+                f"{n} step(s) captured. Save to a JSON file now?")
+            if save_now:
+                self.save_steps()
+
+    def _on_run_one(self):
+        """Ask for one student ID, then run the selected process for them."""
+        if self.replaying:
+            messagebox.showinfo("Busy", "A run is already in progress.")
+            return
+        if not self.steps:
+            messagebox.showinfo(
+                "No process selected",
+                "Choose a process from the left panel first, or record one "
+                "with 'Watch me do it'.")
+            return
+        from tkinter import simpledialog
+        sid = simpledialog.askstring(
+            "Run for one student",
+            "Enter the student's ASAP ID:",
+            parent=self.root)
+        if not sid or not sid.strip():
+            return
+        sid = sid.strip()
+        self._run_batch_inner([sid])
+
+    def _on_run_everyone(self):
+        """Ask for a list of student IDs, then run the batch."""
+        if self.replaying:
+            messagebox.showinfo("Busy", "A run is already in progress.")
+            return
+        if not self.steps:
+            messagebox.showinfo(
+                "No process selected",
+                "Choose a process from the left panel first, or record one "
+                "with 'Watch me do it'.")
+            return
+        dlg = BatchDialog(self.root)
+        self.root.wait_window(dlg)
+        if not dlg.student_ids:
+            return
+        self._run_batch_inner(dlg.student_ids)
+
+    def _run_batch_inner(self, student_ids):
+        """Common code to kick off a batch run."""
+        if not self._check_csvs_writable(["batch_results.csv", "date_swaps.csv"]):
+            self._append_feed("Batch cancelled — close the open CSV file and retry.", tag="yellow")
+            return
+        template = [dict(s) for s in self.steps]
+        self.replaying = True
+        self.worker._stop_event.clear()
+        self._set_state("running", f"Starting batch for {len(student_ids)} student(s)...")
+        self._append_feed(
+            f"Starting batch: {len(student_ids)} student(s).", tag="accent")
+        self.cmd_q.put({"action": "batch_run", "template": template,
+                        "student_ids": student_ids})
+
+    def _on_advanced(self):
+        """Open the advanced tools window (stub)."""
+        messagebox.showinfo(
+            "Advanced tools",
+            "Advanced tools coming soon.\n\n"
+            "This will include:\n"
+            "  • Element inspector & step editor\n"
+            "  • Credentials manager\n"
+            "  • Batch CSV loader\n"
+            "  • Merge PDFs\n"
+            "  • Resolve emails to student IDs\n\n"
+            "For now, use the CLI subcommands: batch / resolve / merge-pdf.")
+
+    # ================================================================== #
+    #  Worker results                                                     #
+    # ================================================================== #
 
     def _poll_results(self):
         try:
@@ -3441,10 +3796,20 @@ class App:
                 elif kind == "locators":
                     self._on_locators_result(action, payload)
                 elif kind == "err":
-                    self._set_status(f"{action} failed: {payload}")
+                    self._append_feed(f"Error: {payload}", tag="red")
         except queue.Empty:
             pass
         self.root.after(60, self._poll_results)
+
+    def _on_snapshot(self, action, payload):
+        self.elements = payload["elements"]
+        self.url_var.set(payload["url"])
+        self._refresh_elements()
+        # Silently update the left-panel footer counts.
+        self._left_footer_var.set(
+            f"{len(self.elements)} screen{'s' if len(self.elements) != 1 else ''} mapped  "
+            f"|  {len(self._loaded_processes)} process"
+            f"{'es' if len(self._loaded_processes) != 1 else ''}")
 
     def _on_download(self, payload):
         filename = payload.get("filename", "")
@@ -3457,26 +3822,19 @@ class App:
             "url": url,
         })
         self.last_download_path = path
-        self._set_status(
-            f"Downloaded: {filename}  —  click here to open  ({path})",
-            clickable=True,
-        )
+        self._append_feed(f"✓ Downloaded {filename}", tag="green")
 
     def _on_status_click(self, _evt=None):
         if self.last_download_path and os.path.exists(self.last_download_path):
             open_path(self.last_download_path)
 
     def _open_downloads_folder(self):
-        # Reveal the most recent download in the folder if we have one,
-        # otherwise just open the folder.
         if self.last_download_path and os.path.exists(self.last_download_path):
             reveal_in_folder(self.last_download_path)
         else:
             open_path(DOWNLOADS_DIR)
 
     def _change_output_folder(self):
-        """Let the user pick where downloads and the date-swap CSV are saved.
-        The choice persists between runs."""
         global DOWNLOADS_DIR
         chosen = filedialog.askdirectory(
             title="Choose output folder (downloads + date-swap log)",
@@ -3490,15 +3848,10 @@ class App:
         except Exception:
             pass
         _save_output_dir(chosen)
-        # Tell the worker thread so its download/CSV code uses the new path.
         self._send({"action": "set_output_dir", "path": chosen})
-        self._set_status(f"Output folder set to: {chosen}")
+        self._append_feed(f"Output folder set to: {chosen}", tag="muted")
 
     def _on_merge_pdfs(self):
-        """Merge the per-student transcript PDFs in the output folder into a
-        single combined.pdf. Runs the merge on a background thread so a large
-        roster doesn't freeze the UI, then updates the status bar (clickable to
-        open the result). Requires the optional 'pypdf' package."""
         folder = DOWNLOADS_DIR
         out = os.path.join(folder, "transcripts_combined.pdf")
         pdfs = [p for p in core.find_pdfs(folder)
@@ -3512,7 +3865,7 @@ class App:
                 "Merge PDFs",
                 f"Merge {len(pdfs)} transcript PDF(s) into:\n{out}?"):
             return
-        self._set_status(f"Merging {len(pdfs)} PDFs…")
+        self._append_feed(f"Merging {len(pdfs)} PDFs...")
 
         def work():
             try:
@@ -3525,44 +3878,29 @@ class App:
 
     def _on_merge_done(self, out, n):
         self.last_download_path = out
-        self._set_status(
-            f"Merged {n} PDF(s) → {out}  —  click here to open",
-            clickable=True)
+        self._append_feed(f"✓ Merged {n} PDF(s) → {out}", tag="green")
 
     def _on_merge_failed(self, err):
         messagebox.showerror("Merge PDFs", str(err))
-        self._set_status("PDF merge failed (see message).")
-
-    def _on_snapshot(self, action, payload):
-        # Element list refresh only. Navigation step recording is owned by
-        # _on_navigation, fed by both framenavigated (real loads) and the
-        # injected JS (SPA route changes).
-        self.elements = payload["elements"]
-        self.url_var.set(payload["url"])
-        self._refresh_elements()
-        self._set_status(f"{len(self.elements)} elements on {payload['url']}")
+        self._append_feed("PDF merge failed.", tag="red")
 
     def _on_event(self, payload):
-        # Suppress event recording during replay — otherwise the listener
-        # captures our own replayed actions and adds duplicate steps.
         if self.replaying:
             return
         step = dict(payload)
-        # JS may emit a 'navigate' event for SPA route changes. Route it
-        # through the same dedup path as real navigations.
         if step.get("type") == "navigate":
             self._on_navigation(step)
             return
-        # Redact secret values unless the user explicitly opted in.
         if step.get("secret") and not self.capture_secrets:
             step["value"] = None
         self._add_step(step)
         self._highlight_match(step)
+        # Show plain-English feed message only during recording.
+        if self._ui_state == "recording":
+            self._append_feed(self._step_to_english(step))
 
     def _on_navigation(self, payload):
-        # Same reasoning as _on_event: don't double-record during replay.
         if self.replaying:
-            # Still update the URL bar for visibility, just don't add a step.
             url = payload.get("url", "")
             if url:
                 self.url_var.set(url)
@@ -3570,20 +3908,11 @@ class App:
         url = payload.get("url", "")
         if not url:
             return
-        # Dedupe: if the previous step is already a navigate to this URL,
-        # skip. Catches the framenavigated+JS double-fire on the same load.
         if (self.steps
                 and self.steps[-1].get("type") == "navigate"
                 and self.steps[-1].get("url") == url):
             self.url_var.set(url)
             return
-        # Suppress ASP.NET postback "navigations". When you select a dropdown,
-        # save, or click certain buttons, the page does a __doPostBack that
-        # reloads the SAME url. The browser fires framenavigated, but it isn't
-        # a navigation the user performed — and replaying it as a goto() forces
-        # a full reload that destroys the state just set (e.g. wiping a swapped
-        # date). If the most recent recorded step already acted on this exact
-        # url, treat this as a postback reload and don't record it.
         last_action_url = None
         for s in reversed(self.steps):
             su = s.get("page_url") or (s.get("url") if s.get("type") == "navigate" else None)
@@ -3592,11 +3921,17 @@ class App:
                 break
         if last_action_url == url:
             self.url_var.set(url)
-            self._dlog(f"  navigation to {url!r} suppressed (postback reload of "
-                       f"current page)")
+            self._dlog(f"  navigation to {url!r} suppressed (postback reload)")
             return
         self._add_step({"type": "navigate", "url": url})
         self.url_var.set(url)
+        if self._ui_state == "recording":
+            try:
+                from urllib.parse import urlparse as _up
+                host = _up(url).hostname or url
+            except Exception:
+                host = url
+            self._append_feed(f"Opening {host}...")
 
     def _on_toggle_capture_secrets(self):
         new = self.capture_secrets_var.get()
@@ -3613,10 +3948,53 @@ class App:
                 self.capture_secrets_var.set(False)
                 return
         self.capture_secrets = new
-        self._set_status(
+        self._append_feed(
             "Capturing secret values (UNSAFE)." if new
-            else "Secret values will be redacted."
-        )
+            else "Secret values will be redacted.",
+            tag="yellow" if new else "muted")
+
+    # ---- Plain-English event translation ----
+
+    def _step_to_english(self, step):
+        """Translate a recorded/replayed step dict to a human sentence."""
+        t = step.get("type", "")
+        name = step.get("name", "") or ""
+        label = step.get("label", "") or ""
+        value = step.get("value", "") or ""
+        url = step.get("url", "")
+
+        if t == "navigate":
+            try:
+                from urllib.parse import urlparse as _up
+                host = _up(url).hostname or url
+            except Exception:
+                host = url
+            return f"Opening {host}..."
+        if t == "click":
+            return f"Clicking '{name}'..." if name else "Clicking..."
+        if t == "fill":
+            if step.get("secret"):
+                return f"Filling in '{name}'..."
+            disp = (value[:30] + "...") if len(value) > 30 else value
+            return f"Filling in '{name}': {disp!r}..." if name else f"Filling in a field..."
+        if t in ("select_option", "select_kendo"):
+            choice = label or value
+            field = name or "a field"
+            return f"Selecting '{choice}' from '{field}'..."
+        if t == "check":
+            return f"Checking '{name}'..." if name else "Checking a checkbox..."
+        if t == "swap_dates":
+            return "Checking diploma and graduation dates..."
+        if t == "download":
+            fn = step.get("filename", "")
+            return f"✓ Downloaded {fn}" if fn else "✓ File downloaded."
+        if t == "press":
+            return f"Pressing {step.get('key', '')}..."
+        return format_step(step)
+
+    # ================================================================== #
+    #  Step list management (preserved from original)                    #
+    # ================================================================== #
 
     def _add_step(self, step):
         self.steps.append(step)
@@ -3674,8 +4052,6 @@ class App:
         self.highlighted_idx = None
         self.highlight_after = None
 
-    # ----- Step list management -----
-
     def on_edit_step(self, _evt=None):
         sel = self.step_list.curselection()
         if not sel: return
@@ -3689,44 +4065,27 @@ class App:
             self.step_list.selection_set(idx)
 
     def _remember_step_sel(self, event=None):
-        """Record the currently selected step index. Called on every selection
-        change in the steps list so we can anchor an insert to it later even
-        after the highlight is gone (e.g. once focus moves to the element
-        list). Clearing the list (no selection) leaves the last value intact;
-        it gets reset elsewhere when steps are cleared/loaded."""
         sel = self.step_list.curselection()
         if sel:
             self._last_step_sel = sel[0]
 
     def insert_element_as_step(self):
-        """Insert the element selected in the left list as a recorded step,
-        placed after the selected step on the right (or at the end). The
-        action type is chosen from the element's role. We first ask the worker
-        for the element's stable DOM locators (id/name) so the inserted step
-        targets robustly rather than by fragile position."""
         sel = self.el_list.curselection()
         if not sel:
-            self._set_status("Select an element in the left list first.")
+            self._append_feed("Select an element in the element list first.", tag="muted")
             return
         el = self.elements[sel[0]]
         role = el.get("role")
         name = el.get("name", "") or ""
         nth = el.get("nth", 0) or 0
 
-        # Map role -> sensible default action.
         if role in ("checkbox", "radio", "switch"):
             action_type = "check"
         elif role == "combobox":
             action_type = "select_option"
         else:
-            action_type = "click"  # link, button, option, tab, menuitem, etc.
+            action_type = "click"
 
-        # Remember where to insert and what we're inserting; the worker will
-        # call back with locators.
-        # Decide where to insert: right after the step selected on the right.
-        # Prefer the live selection; if the highlight has cleared (focus moved
-        # to the element list), fall back to the last step that was selected;
-        # if neither, append to the end.
         rsel = self.step_list.curselection()
         if rsel:
             anchor = rsel[0]
@@ -3741,7 +4100,6 @@ class App:
             "insert_idx": insert_idx,
         }
         token = "insert_el"
-        self._set_status(f"Looking up locators for [{role}] {name!r}…")
         self._send({"action": "lookup_locators", "role": role, "name": name,
                     "nth": nth, "token": token})
 
@@ -3756,14 +4114,11 @@ class App:
         if locators:
             step["locators"] = locators
 
-        # For select_option we need a value/label, which the left list doesn't
-        # carry. Open the editor so the user can fill in which option to pick.
         if pending["type"] == "select_option":
             dlg = StepEditDialog(self.root, step)
             dlg.title("Insert dropdown selection — set Value or label")
             self.root.wait_window(dlg)
             if dlg.result is None:
-                self._set_status("Insert cancelled.")
                 return
             step = dlg.result
 
@@ -3775,13 +4130,7 @@ class App:
         self.step_list.selection_clear(0, tk.END)
         self.step_list.selection_set(idx)
         self.step_list.see(idx)
-        # Anchor the next insert after this newly added step (programmatic
-        # selection_set doesn't reliably fire <<ListboxSelect>>).
         self._last_step_sel = idx
-        loc_note = (f"by id {locators['id']!r}" if locators.get("id")
-                    else "by role+name (no stable id found)")
-        self._set_status(f"Inserted {step['type']} [{step.get('role')}] "
-                         f"{step.get('name')!r} at position {idx} ({loc_note}).")
 
     def insert_step(self):
         """Insert a brand-new step of any type. Opens the same editor used for
@@ -4003,22 +4352,20 @@ class App:
             return
 
         self.replaying = True
-        self.replay_btn.config(state="disabled")
         self.worker._stop_event.clear()
-        self.stop_btn.config(state="normal")
-        self._set_status(f"Resolving {len(dlg.emails)} emails...")
-        self.replay_progress_var.set(f"Resolving 0/{len(dlg.emails)}")
+        self._set_state("running", f"Resolving 0/{len(dlg.emails)}")
+        self._append_feed(f"Resolving {len(dlg.emails)} emails...")
         self.cmd_q.put({"action": "resolve_run", "emails": dlg.emails,
                         "template": template, "auto_batch": auto_batch})
 
     def _on_resolve_start(self, payload):
-        self._set_status(f"Resolving {payload.get('total')} emails...")
+        self._append_feed(f"Resolving {payload.get('total')} emails...", tag="accent")
 
     def _on_resolve_progress(self, payload):
         cur = payload.get("current"); total = payload.get("total")
         email = payload.get("email", "")
-        self.replay_progress_var.set(f"Resolving {cur}/{total}")
-        self._set_status(f"Looking up {email}...")
+        self._progress_var.set(f"Resolving {cur}/{total}")
+        self._append_feed(f"Looking up {email}...")
 
     def _on_resolve_done(self, payload):
         resolved = payload.get("resolved", 0)
@@ -4037,15 +4384,13 @@ class App:
                     f"cleanly-resolved students...")
             # The batch_* events will drive the rest of the UI; don't release
             # the replaying flag yet. Stop stays enabled for the batch phase.
-            self._set_status(f"Resolved {resolved}; starting batch...")
+            self._append_feed(f"Resolved {resolved}; starting batch...", tag="accent")
             messagebox.showinfo("Resolve complete", msg)
         else:
             self.replaying = False
-            self.replay_btn.config(state="normal")
-            self.stop_btn.config(state="disabled")
-            self.replay_progress_var.set("")
+            self._set_state("idle")
             done_word = "stopped" if stopped else "complete"
-            self._set_status(f"Resolve {done_word}. Roster: {roster_path}")
+            self._append_feed(f"Resolve {done_word}. Roster: {roster_path}", tag="green")
             messagebox.showinfo("Resolve complete", msg)
 
     def on_batch(self):
@@ -4084,11 +4429,9 @@ class App:
 
         template = [dict(s) for s in self.steps]
         self.replaying = True
-        self.replay_btn.config(state="disabled")
         self.worker._stop_event.clear()
-        self.stop_btn.config(state="normal")
-        self._set_status(f"Batch: processing {len(dlg.student_ids)} students...")
-        self.replay_progress_var.set(f"Batch 0/{len(dlg.student_ids)}")
+        self._set_state("running", f"Batch 0/{len(dlg.student_ids)}")
+        self._append_feed(f"Batch: processing {len(dlg.student_ids)} students...", tag="accent")
         self.cmd_q.put({"action": "batch_run", "template": template,
                         "student_ids": dlg.student_ids})
 
@@ -4151,43 +4494,11 @@ class App:
     # ----- Theme toggle (Phase 3) ---------------------------------------
 
     def toggle_theme(self):
-        self._dark = not self._dark
-        self._apply_theme(self._dark)
-        self._set_status("Dark theme on." if self._dark else "Light theme on.")
+        # Dashboard is permanently dark; this is a no-op kept for API compat.
+        pass
 
     def _apply_theme(self, dark):
-        """Best-effort dark/light theme. Wrapped so a theming hiccup on an
-        exotic platform can never take the app down. The palette mirrors the
-        About screen (near-black panel, cyan accent)."""
-        try:
-            style = ttk.Style()
-            try:
-                style.theme_use("clam")  # clam honours custom colours best
-            except Exception:
-                pass
-            if dark:
-                bg, fg, field, sel, accent = (
-                    "#0d1117", "#e6edf3", "#161b22", "#1f6feb", "#39d3ff")
-            else:
-                bg, fg, field, sel, accent = (
-                    "#f0f0f0", "#000000", "#ffffff", "#0a5ed8", "#0a5ed8")
-            self.root.configure(bg=bg)
-            for klass in ("TFrame", "TLabel", "TPanedwindow"):
-                style.configure(klass, background=bg, foreground=fg)
-            style.configure("TButton", background=field, foreground=fg)
-            style.map("TButton", background=[("active", sel)])
-            style.configure("TCheckbutton", background=bg, foreground=fg)
-            style.configure("TEntry", fieldbackground=field, foreground=fg)
-            # Plain tk widgets don't follow ttk styles — colour them directly.
-            for lb in (getattr(self, "el_list", None),
-                       getattr(self, "step_list", None)):
-                if lb is not None:
-                    lb.configure(bg=field, fg=fg,
-                                 selectbackground=sel, selectforeground="#ffffff")
-            if getattr(self, "status_label", None) is not None:
-                self.status_label.configure(background=field, foreground=fg)
-        except Exception as e:
-            core.dlog(f"theme toggle failed (non-fatal): {e}")
+        pass  # Dashboard uses its own fixed dark palette; ttk theming not needed.
 
     def _check_csvs_writable(self, filenames):
         """Before a run, check that the result CSVs we'll need to write aren't
@@ -4231,16 +4542,12 @@ class App:
         command wouldn't be seen in time. threading.Event is safe to set
         cross-thread."""
         self.worker._stop_event.set()
-        self.stop_btn.config(state="disabled")
-        self._set_status("Stop requested — finishing the current student, "
-                         "then halting...")
-        self.replay_progress_var.set("Stopping...")
+        self._progress_var.set("Stopping...")
+        self._append_feed("Stop requested — finishing the current student, then halting...", tag="yellow")
 
     def _on_batch_start(self, payload):
         total = payload.get("total", 0)
-        self._set_status(f"Batch started: {total} students.")
-        # Open (or reuse) the live progress window — a table that fills in as
-        # each student is processed, so a long unattended run is glanceable.
+        self._append_feed(f"Batch started: {total} student(s).", tag="accent")
         try:
             if self._batch_monitor is None or not self._batch_monitor.alive():
                 self._batch_monitor = BatchMonitor(self.root, total)
@@ -4253,9 +4560,15 @@ class App:
         cur = payload.get("current"); total = payload.get("total")
         sid = payload.get("student_id", "")
         status = payload.get("status", "")
-        self.replay_progress_var.set(f"Batch {cur}/{total} (id {sid})")
-        if status in ("success", "failed"):
-            self._set_status(f"Student {sid}: {status}")
+        self._progress_var.set(f"Working on student {cur} of {total}...")
+        if status == "success":
+            self._append_feed(f"✓ Student {sid} done.", tag="green")
+        elif status == "failed":
+            self._append_feed(f"Student {sid}: could not complete.", tag="red")
+        elif status == "skipped":
+            self._append_feed(f"Student {sid}: already downloaded, skipping.", tag="muted")
+        elif status == "running":
+            self._append_feed(f"Working on student {cur} of {total} (id {sid})...")
         if self._batch_monitor is not None:
             try:
                 self._batch_monitor.update_row(
@@ -4265,9 +4578,7 @@ class App:
 
     def _on_batch_done(self, payload):
         self.replaying = False
-        self.replay_btn.config(state="normal")
-        self.stop_btn.config(state="disabled")
-        self.replay_progress_var.set("")
+        self._set_state("idle")
         ok = payload.get("succeeded", 0)
         failed = payload.get("failed", 0)
         skipped = payload.get("skipped", 0)
@@ -4289,10 +4600,11 @@ class App:
                 shown += ", ..."
             msg += f"\n\nFailed student IDs: {shown}"
         msg += f"\n\nResults saved to:\n{csv_path}"
-        status = f"{head}: {ok} ok, {failed} failed"
-        if skipped:
-            status += f", {skipped} skipped"
-        self._set_status(f"{status}. Results: {csv_path}", clickable=False)
+        feed_tag = "yellow" if (failed or stopped) else "green"
+        self._append_feed(
+            f"✓ Done — {ok} transcript{'s' if ok != 1 else ''} downloaded. "
+            f"{failed} needed attention.",
+            tag=feed_tag)
         if self._batch_monitor is not None:
             try:
                 self._batch_monitor.finalize(head)
@@ -4350,9 +4662,8 @@ class App:
 
         self.replaying = True
         self.replay_steps_in_flight = steps_to_run
-        self.replay_btn.config(state="disabled")
-        self._set_status(f"Replaying {len(steps_to_run)} steps...")
-        self.replay_progress_var.set(f"Replaying 0/{len(steps_to_run)}")
+        self._set_state("running", f"Replaying 0/{len(steps_to_run)}")
+        self._append_feed(f"Replaying {len(steps_to_run)} steps...", tag="accent")
         self.cmd_q.put({"action": "replay", "steps": steps_to_run})
 
     def _find_host_for(self, steps, target_step):
@@ -4429,35 +4740,34 @@ class App:
 
     def _on_replay_start(self, payload):
         total = payload.get("total", 0)
-        self.replay_progress_var.set(f"Replaying 0/{total}")
+        self._progress_var.set(f"Replaying 0/{total}")
 
     def _on_replay_step(self, payload):
         idx = payload.get("index", 0)
         total = payload.get("total", 0)
         status = payload.get("status", "")
-        self.replay_progress_var.set(f"Step {idx+1}/{total}: {status}")
-        # Highlight the current step in the listbox.
-        try:
-            self.step_list.selection_clear(0, tk.END)
-            self.step_list.selection_set(idx)
-            self.step_list.see(idx)
-            # Optional: tint the row while running.
-            color = "#fff2a8" if status == "running" else "#d4f4d4"
-            self.step_list.itemconfig(idx, background=color)
-        except Exception:
-            pass
+        step = payload.get("step", {})
+        self._progress_var.set(f"Step {idx+1}/{total}: {status}")
+        if status == "done":
+            msg = self._step_to_english(step)
+            # Convert "Opening..." / "Clicking..." → "✓ ..." for done steps.
+            if msg.endswith("..."):
+                msg = "✓ " + msg[:-3] + "."
+            self._append_feed(msg, tag="green")
 
     def _on_replay_paused(self, payload):
         idx = payload.get("index", 0)
         step = payload.get("step", {})
         reason = payload.get("reason", "")
+        step_desc = format_step(step)
+        self._append_feed(
+            f"⚠ Couldn't complete '{step_desc}' — needs attention.", tag="yellow")
         choice = ReplayPauseDialog(
             self.root, idx, step, reason
         ).result
         if choice == "stop":
             self._end_replay(message=f"Replay stopped at step {idx+1}.")
         elif choice == "skip":
-            # Resume from the NEXT step.
             self.cmd_q.put({
                 "action": "replay_resume",
                 "steps": self.replay_steps_in_flight,
@@ -4469,7 +4779,7 @@ class App:
                 "steps": self.replay_steps_in_flight,
                 "starting_index": idx,
             })
-        else:  # closed dialog without choosing
+        else:
             self._end_replay(message="Replay cancelled.")
 
     def _on_replay_done(self, payload):
@@ -4479,16 +4789,9 @@ class App:
     def _end_replay(self, message=""):
         self.replaying = False
         self.replay_steps_in_flight = []
-        self.replay_btn.config(state="normal")
-        self.replay_progress_var.set("")
+        self._set_state("idle")
         if message:
-            self._set_status(message)
-        # Clear the row highlights from the listbox.
-        try:
-            for i in range(self.step_list.size()):
-                self.step_list.itemconfig(i, background="")
-        except Exception:
-            pass
+            self._append_feed(message, tag="green")
 
 
 # ----- Dialogs --------------------------------------------------------------
