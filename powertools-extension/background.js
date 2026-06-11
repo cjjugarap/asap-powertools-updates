@@ -136,9 +136,10 @@ let state = {
   succeeded: 0,
   failed: 0,
   skipped: 0,
-  pendingDownloadName: null, // set before btnPrint click; consumed by onDeterminingFilename
+  pendingDownloadName: null,
   currentStudentId: null,
   currentStudentName: null,
+  lastDownloadId: null,
 };
 
 function resetState() {
@@ -154,20 +155,20 @@ function resetState() {
     pendingDownloadName: null,
     currentStudentId: null,
     currentStudentName: null,
+    lastDownloadId: null,
   };
 }
 
-// ── Download filename interception ────────────────────────────────────────────
+// ── Download folder preference ────────────────────────────────────────────────
+// The folder is stored as a subfolder path relative to the user's Downloads
+// directory (Chrome extensions cannot write outside Downloads). Default: "ASAP Transcripts".
 
-chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-  if (state.pendingDownloadName) {
-    const name = state.pendingDownloadName;
-    state.pendingDownloadName = null;
-    suggest({ filename: name, conflictAction: 'uniquify' });
-  } else {
-    suggest();
-  }
-});
+const DEFAULT_DOWNLOAD_SUBFOLDER = 'ASAP Transcripts';
+
+async function getDownloadSubfolder() {
+  const { downloadSubfolder } = await chrome.storage.local.get('downloadSubfolder');
+  return (downloadSubfolder || DEFAULT_DOWNLOAD_SUBFOLDER).replace(/\\/g, '/').replace(/\/$/, '');
+}
 
 // ── Debug log ─────────────────────────────────────────────────────────────────
 
@@ -325,9 +326,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'get_settings') {
-    chrome.storage.local.get('apiKey', ({ apiKey }) => {
-      sendResponse({ apiKey: apiKey || '' });
+    chrome.storage.local.get(['apiKey', 'downloadSubfolder'], data => {
+      sendResponse({
+        apiKey: data.apiKey || '',
+        downloadSubfolder: data.downloadSubfolder || DEFAULT_DOWNLOAD_SUBFOLDER,
+      });
     });
+    return true;
+  }
+
+  if (msg.type === 'save_download_folder') {
+    chrome.storage.local.set({ downloadSubfolder: msg.folder })
+      .then(() => sendResponse({ ok: true }))
+      .catch(err => sendResponse({ ok: false, err: err.message }));
+    return true;
+  }
+
+  if (msg.type === 'open_download_folder') {
+    if (state.lastDownloadId != null) {
+      chrome.downloads.show(state.lastDownloadId);
+    } else {
+      chrome.downloads.showDefaultFolder();
+    }
+    sendResponse({ ok: true });
     return true;
   }
 });
@@ -431,28 +452,53 @@ function waitForNewTab(timeoutMs = 5000) {
   });
 }
 
-function waitForDownload(timeoutMs = 30000) {
+function waitForDownload(timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.downloads.onCreated.removeListener(onCreated);
-      reject(new Error('Download did not start within 30 seconds'));
+      reject(new Error('Download did not start within 45 seconds'));
     }, timeoutMs);
 
-    function onCreated(item) {
+    async function onCreated(item) {
       clearTimeout(timer);
       chrome.downloads.onCreated.removeListener(onCreated);
-      // Wait for the download to finish.
-      waitForDownloadComplete(item.id, 60000).then(resolve).catch(reject);
+
+      // Cancel the browser-initiated download so we can re-initiate it with:
+      //   • our custom filename (student name + id)
+      //   • saveAs: false (no Save As dialog, regardless of Chrome's setting)
+      //   • our preferred subfolder
+      const name = state.pendingDownloadName;
+      state.pendingDownloadName = null;
+
+      if (name) {
+        try { await chrome.downloads.cancel(item.id); } catch (_) {}
+        const subfolder = await getDownloadSubfolder();
+        const filename = subfolder + '/' + name;
+        chrome.downloads.download(
+          { url: item.url, filename, saveAs: false, conflictAction: 'uniquify' },
+          newId => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              state.lastDownloadId = newId;
+              waitForDownloadComplete(newId, 120000).then(resolve).catch(reject);
+            }
+          }
+        );
+      } else {
+        state.lastDownloadId = item.id;
+        waitForDownloadComplete(item.id, 120000).then(resolve).catch(reject);
+      }
     }
     chrome.downloads.onCreated.addListener(onCreated);
   });
 }
 
-function waitForDownloadComplete(downloadId, timeoutMs = 60000) {
+function waitForDownloadComplete(downloadId, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.downloads.onChanged.removeListener(onChange);
-      reject(new Error('Download did not complete within 60 seconds'));
+      reject(new Error('Download did not complete within 2 minutes'));
     }, timeoutMs);
 
     function onChange(delta) {
