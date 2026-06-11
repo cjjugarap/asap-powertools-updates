@@ -593,38 +593,56 @@ async function executeStepInPage(step) {
 
     // ── select_kendo ─────────────────────────────────────────────
     if (t === 'select_kendo') {
-      // Poll for jQuery + Kendo widget — they may load after tab reports 'complete'.
+      // Helper: get Kendo widget via jQuery OR native kendo.widgetInstance()
+      // (newer Kendo runs without jQuery; both APIs must be tried).
+      function getWidget(el) {
+        if (!el) return null;
+        const jq = window.jQuery || window.$;
+        if (jq) {
+          const w = jq(el).data('kendoDropDownList') || jq(el).data('kendoComboBox');
+          if (w) return w;
+        }
+        if (window.kendo && kendo.widgetInstance) {
+          return kendo.widgetInstance(el) || null;
+        }
+        return null;
+      }
+
+      // Poll until the element exists AND either a Kendo widget is attached
+      // OR Kendo has fully loaded (so we know it's simply a plain <select>).
       const deadline = Date.now() + 5000;
-      let el, jq, widget;
+      let el, widget;
       while (Date.now() < deadline) {
-        el     = findEl(loc, null, null, 0);
-        jq     = window.jQuery || window.$;
-        widget = el && jq && (jq(el).data('kendoDropDownList') || jq(el).data('kendoComboBox'));
-        if (widget) break;
+        el = findEl(loc, null, null, 0);
+        widget = getWidget(el);
+        const kendoReady = window.kendo || window.jQuery || window.$;
+        if (widget || (el && kendoReady)) break;
         await new Promise(r => setTimeout(r, 150));
       }
 
       if (widget) {
-        // Kendo widget found — use its API.
         widget.value(step.value);
         widget.trigger('change');
         return { ok: true };
       }
 
-      // Kendo not available — fall back to treating it as a plain <select>.
-      if (!el) el = findEl(loc, 'combobox', null, 0);
-      if (!el || el.tagName !== 'SELECT') {
-        return { ok: false, err: 'Kendo widget not found and no plain <select> fallback' };
-      }
-      for (const opt of el.options) {
-        if (opt.value === step.value || opt.text.trim() === step.value ||
-            opt.text.trim() === step.label) {
-          el.value = opt.value;
-          dispatch(el, ['change', 'input']);
-          return { ok: true, waitForNav: true };
+      // No widget — try plain <select> (hidden select Kendo wraps, or no Kendo at all).
+      let sel = el && el.tagName === 'SELECT' ? el : null;
+      if (!sel) sel = document.querySelector(`select[id*="${loc.id || loc.id_suffix || ''}"]`);
+      if (!sel) sel = findEl(loc, 'combobox', null, 0);
+      if (sel && sel.tagName === 'SELECT') {
+        const target = step.value || step.label || '';
+        for (const opt of sel.options) {
+          if (opt.value === target || opt.text.trim() === target) {
+            sel.value = opt.value;
+            dispatch(sel, ['change', 'input']);
+            return { ok: true, waitForNav: true };
+          }
         }
+        return { ok: false, err: `Option "${target}" not found in <select>` };
       }
-      return { ok: false, err: `Option "${step.value || step.label}" not found` };
+
+      return { ok: false, err: `Kendo widget not found and no <select> fallback for "${loc.id || loc.id_suffix}"` };
     }
 
     // ── check (checkbox) ─────────────────────────────────────────
