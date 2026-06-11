@@ -686,14 +686,18 @@ async function runStep(step) {
     return { ok: true };
   }
 
-  // For the step just before a download (btnPrint), start watching for downloads.
-  let downloadPromise = null;
+  // Start watchers BEFORE executing the step to avoid race conditions where
+  // a fast postback completes before we start listening.
   const locId = (step.locators || {}).id || '';
   const locSuffix = (step.locators || {}).id_suffix || '';
   const isBtnPrint = locId === 'btnPrint' || locSuffix === 'btnPrint';
-  if (t === 'click' && isBtnPrint) {
-    downloadPromise = waitForDownload(45000);
-  }
+
+  const navPromise   = (t === 'click' || t === 'select_option')
+    ? waitForTabLoad(tabId, 15000).catch(() => null) : null;
+  const newTabPromise = (t === 'click')
+    ? waitForNewTab(3000) : null;
+  const downloadPromise = (t === 'click' && isBtnPrint)
+    ? waitForDownload(45000) : null;
 
   // Inject and execute the step.
   let result;
@@ -710,7 +714,7 @@ async function runStep(step) {
 
   if (!result.ok) return result;
 
-  // openHref is only set when the link uses onclick=window.open() — always a popup.
+  // Case 1: window.open captured — open as a new popup tab directly.
   if (result.openHref) {
     const newTab = await chrome.tabs.create({ url: result.openHref, active: false });
     state.popupTabId = newTab.id;
@@ -719,14 +723,31 @@ async function runStep(step) {
     return result;
   }
 
-  // waitForNav is only true now when UpdatePanel wasn't present (full navigation).
-  if (result.waitForNav) {
-    try {
-      await waitForTabLoad(tabId, 15000);
-    } catch (_) {}
+  // Case 2+3: check if a same-tab navigation or new-tab popup happened.
+  // Give the browser 60ms to start any navigation before we inspect tab status.
+  await new Promise(r => setTimeout(r, 60));
+
+  const tabInfo = await chrome.tabs.get(tabId).catch(() => null);
+  if (tabInfo && tabInfo.status === 'loading') {
+    // Same-tab navigation started — wait for it (navPromise already listening).
+    await navPromise;
+  } else {
+    // No same-tab navigation. Check if a popup tab opened (e.g. target=_blank).
+    const newTabId = await Promise.race([
+      newTabPromise || Promise.resolve(null),
+      new Promise(r => setTimeout(() => r(null), 400)),
+    ]);
+    if (newTabId) {
+      state.popupTabId = newTabId;
+      state.activeTabId = newTabId;
+      await waitForTabLoad(newTabId, 15000);
+    } else {
+      // Nothing navigated — AJAX, dropdown open, or static click. Small settle.
+      await new Promise(r => setTimeout(r, 150));
+    }
   }
 
-  // If we were waiting for a download, record the result.
+  // Download handling (btnPrint triggers a download after its click).
   if (downloadPromise) {
     try {
       const dlItem = await downloadPromise;
