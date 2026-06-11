@@ -40,7 +40,7 @@ const btnSaveSettings = document.getElementById('btn-save-settings');
 const btnBackSettings = document.getElementById('btn-back-settings');
 const settingsStatus  = document.getElementById('settings-status');
 const btnDebug        = document.getElementById('btn-debug');
-const settingsVersion = document.getElementById('settings-version');
+const headerVersion   = document.getElementById('header-version');
 
 // ── Screen navigation ─────────────────────────────────────────────────────────
 
@@ -332,8 +332,6 @@ settingsBtn.addEventListener('click', () => {
     apiKeyInput.value = resp && resp.apiKey ? '••••••••' : '';
     apiKeyInput.dataset.loaded = resp && resp.apiKey ? 'yes' : '';
     settingsStatus.textContent = '';
-    const v = chrome.runtime.getManifest().version;
-    settingsVersion.textContent = `v${v}`;
     showScreen('settings');
     headerSub.textContent = 'Settings';
   });
@@ -416,4 +414,5 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+headerVersion.textContent = 'v' + chrome.runtime.getManifest().version;
 reloadProcessCards();
