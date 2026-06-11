@@ -456,10 +456,27 @@ function waitForDownloadComplete(downloadId, timeoutMs = 60000) {
 }
 
 // ── Step executor (injected into page) ────────────────────────────────────────
-// This function is serialised and sent to the tab via chrome.scripting.
-// It must be entirely self-contained — no closures over outer variables.
+// Async so chrome.scripting awaits the returned Promise.
+// Must be entirely self-contained — no closures over outer variables.
 
-function executeStepInPage(step) {
+async function executeStepInPage(step) {
+  // Returns a Promise that resolves when the ASP.NET UpdatePanel finishes its
+  // current AJAX postback, or immediately if no postback is in flight.
+  // This lets us wait exactly as long as the server needs — no guessing.
+  function waitForPostback(timeoutMs) {
+    return new Promise((resolve) => {
+      try {
+        const mgr = window.Sys &&
+                    window.Sys.WebForms &&
+                    window.Sys.WebForms.PageRequestManager.getInstance();
+        if (!mgr) return resolve('no-updatepanel');
+        const tid = setTimeout(() => { mgr.remove_endRequest(h); resolve('timeout'); }, timeoutMs);
+        function h() { clearTimeout(tid); mgr.remove_endRequest(h); resolve('done'); }
+        mgr.add_endRequest(h);
+      } catch (_) { resolve('error'); }
+    });
+  }
+
   function findEl(locators, role, name, nth) {
     if (!locators) locators = {};
     // 1. Exact ID
@@ -520,26 +537,27 @@ function executeStepInPage(step) {
     if (t === 'click') {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
-      // Intercept window.open so we can capture the popup URL regardless of
-      // how the onclick calls it (direct or through a wrapper function).
-      // Injected clicks aren't trusted gestures so window.open gets blocked —
-      // we capture the URL instead and let background open the tab directly.
+      // Intercept window.open — injected clicks aren't trusted gestures so
+      // window.open gets blocked. Capture the URL; background opens it instead.
       let capturedUrl = null;
       const origOpen = window.open;
       window.open = (url) => { capturedUrl = String(url); return null; };
+      // Register UpdatePanel listener BEFORE the click so we don't miss the event.
+      const postback = waitForPostback(30000);
       el.click();
       window.open = origOpen;
       if (capturedUrl) {
-        return { ok: true, waitForNav: false, openHref: new URL(capturedUrl, location.href).href };
+        return { ok: true, openHref: new URL(capturedUrl, location.href).href };
       }
-      return { ok: true, waitForNav: true };
+      const reason = await postback;
+      // 'done' = UpdatePanel finished. 'no-updatepanel' / 'error' = full nav or static.
+      return { ok: true, waitForNav: reason !== 'done' };
     }
 
     // ── select_option ────────────────────────────────────────────
     if (t === 'select_option') {
       const el = findEl(loc, 'combobox', step.name, step.nth);
       if (!el) return { ok: false, err: `Select not found: ${step.name}` };
-      // Try by value first, then by label text.
       let found = false;
       for (const opt of el.options) {
         if (opt.value === step.value || opt.text === step.label) {
@@ -549,8 +567,10 @@ function executeStepInPage(step) {
         }
       }
       if (!found) return { ok: false, err: `Option not found: ${step.label || step.value}` };
+      const postback = waitForPostback(30000);
       dispatch(el, ['change', 'input']);
-      return { ok: true, waitForNav: true };
+      const reason = await postback;
+      return { ok: true, waitForNav: reason !== 'done' };
     }
 
     // ── select_kendo ─────────────────────────────────────────────
@@ -681,16 +701,11 @@ async function runStep(step) {
     return result;
   }
 
-  // If a postback/navigation was triggered, wait for the page to settle.
-  // ASP.NET UpdatePanel clicks use AJAX and don't trigger a full tab load,
-  // so we use a short timeout and fall back to a fixed delay if nothing fires.
+  // waitForNav is only true now when UpdatePanel wasn't present (full navigation).
   if (result.waitForNav) {
     try {
-      await waitForTabLoad(tabId, 1500);
-    } catch (_) {
-      // AJAX postback — tab never changed status. Give it a moment to settle.
-      await new Promise(r => setTimeout(r, 500));
-    }
+      await waitForTabLoad(tabId, 15000);
+    } catch (_) {}
   }
 
   // If we were waiting for a download, record the result.
