@@ -35,10 +35,11 @@ const reviewSteps     = document.getElementById('review-steps');
 const btnSaveProc     = document.getElementById('btn-save-proc');
 const btnReClean      = document.getElementById('btn-re-clean');
 const btnDiscard      = document.getElementById('btn-discard');
-const apiKeyInput         = document.getElementById('api-key-input');
-const downloadFolderInput = document.getElementById('download-folder-input');
-const btnOpenFolder       = document.getElementById('btn-open-folder');
-const btnSaveSettings     = document.getElementById('btn-save-settings');
+const apiKeyInput           = document.getElementById('api-key-input');
+const downloadFolderDisplay = document.getElementById('download-folder-display');
+const btnBrowseFolder       = document.getElementById('btn-browse-folder');
+const btnOpenFolder         = document.getElementById('btn-open-folder');
+const btnSaveSettings       = document.getElementById('btn-save-settings');
 const btnBackSettings     = document.getElementById('btn-back-settings');
 const settingsStatus      = document.getElementById('settings-status');
 const btnDebug            = document.getElementById('btn-debug');
@@ -333,7 +334,7 @@ settingsBtn.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'get_settings' }, (resp) => {
     apiKeyInput.value = resp && resp.apiKey ? '••••••••' : '';
     apiKeyInput.dataset.loaded = resp && resp.apiKey ? 'yes' : '';
-    downloadFolderInput.value = (resp && resp.downloadSubfolder) || 'ASAP Transcripts';
+    downloadFolderDisplay.textContent = (resp && resp.downloadSubfolder) || 'ASAP Transcripts';
     settingsStatus.textContent = '';
     showScreen('settings');
     headerSub.textContent = 'Settings';
@@ -347,30 +348,44 @@ apiKeyInput.addEventListener('focus', () => {
   }
 });
 
-btnSaveSettings.addEventListener('click', () => {
-  const key    = apiKeyInput.value.trim();
-  const folder = downloadFolderInput.value.trim() || 'ASAP Transcripts';
-  const saves  = [];
-
-  if (key && key !== '••••••••') {
-    saves.push(new Promise((res, rej) =>
-      chrome.runtime.sendMessage({ type: 'save_settings', apiKey: key }, r =>
-        r && r.ok ? res() : rej())));
+// Browse button: opens a real OS folder picker via the File System Access API.
+// We use the chosen folder's name as the subfolder within Downloads.
+btnBrowseFolder.addEventListener('click', async () => {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const folderName = handle.name;
+    chrome.runtime.sendMessage({ type: 'save_download_folder', folder: folderName }, resp => {
+      if (resp && resp.ok) {
+        downloadFolderDisplay.textContent = folderName;
+        settingsStatus.style.color = 'var(--green)';
+        settingsStatus.textContent = `Folder set to "${folderName}".`;
+      }
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      settingsStatus.style.color = 'var(--red)';
+      settingsStatus.textContent = 'Could not open folder picker.';
+    }
   }
-  saves.push(new Promise((res, rej) =>
-    chrome.runtime.sendMessage({ type: 'save_download_folder', folder }, r =>
-      r && r.ok ? res() : rej())));
+});
 
-  Promise.all(saves).then(() => {
-    settingsStatus.style.color = 'var(--green)';
-    settingsStatus.textContent = 'Saved.';
-    if (key && key !== '••••••••') {
+btnSaveSettings.addEventListener('click', () => {
+  const key = apiKeyInput.value.trim();
+  if (!key || key === '••••••••') {
+    settingsStatus.style.color = 'var(--yellow)';
+    settingsStatus.textContent = 'Enter a new key to update.';
+    return;
+  }
+  chrome.runtime.sendMessage({ type: 'save_settings', apiKey: key }, resp => {
+    if (resp && resp.ok) {
+      settingsStatus.style.color = 'var(--green)';
+      settingsStatus.textContent = 'Saved.';
       apiKeyInput.value = '••••••••';
       apiKeyInput.dataset.loaded = 'yes';
+    } else {
+      settingsStatus.style.color = 'var(--red)';
+      settingsStatus.textContent = 'Save failed.';
     }
-  }).catch(() => {
-    settingsStatus.style.color = 'var(--red)';
-    settingsStatus.textContent = 'Save failed.';
   });
 });
 

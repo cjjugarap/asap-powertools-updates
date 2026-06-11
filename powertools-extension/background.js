@@ -160,15 +160,32 @@ function resetState() {
 }
 
 // ── Download folder preference ────────────────────────────────────────────────
-// Chrome extensions can only write inside the user's Downloads directory.
-// The setting is stored as a path relative to Downloads (e.g. "ASAP Transcripts").
+// Stored as a subfolder path relative to the user's Downloads directory.
 
 const DEFAULT_DOWNLOAD_SUBFOLDER = 'ASAP Transcripts';
 
+// Cached in memory so onDeterminingFilename can call suggest() synchronously.
+let _cachedSubfolder = DEFAULT_DOWNLOAD_SUBFOLDER;
+chrome.storage.local.get('downloadSubfolder', ({ downloadSubfolder }) => {
+  if (downloadSubfolder) _cachedSubfolder = downloadSubfolder.replace(/\\/g, '/').replace(/\/$/, '');
+});
+
 async function getDownloadSubfolder() {
-  const { downloadSubfolder } = await chrome.storage.local.get('downloadSubfolder');
-  return (downloadSubfolder || DEFAULT_DOWNLOAD_SUBFOLDER).replace(/\\/g, '/').replace(/\/$/, '');
+  return _cachedSubfolder;
 }
+
+// ── Download filename interception ────────────────────────────────────────────
+// onDeterminingFilename fires before Chrome writes the file or shows any dialog.
+// Calling suggest() here redirects the file to our subfolder with our custom name,
+// without cancelling or re-downloading (the original download continues uninterrupted).
+
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  if (state.pendingDownloadName) {
+    const name = state.pendingDownloadName;
+    state.pendingDownloadName = null;
+    suggest({ filename: _cachedSubfolder + '/' + name, conflictAction: 'uniquify' });
+  }
+});
 
 // Reveal the preferred download folder in the OS file manager.
 // If a transcript was downloaded this session, reveal that file.
@@ -370,7 +387,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'save_download_folder') {
-    chrome.storage.local.set({ downloadSubfolder: msg.folder })
+    const folder = (msg.folder || DEFAULT_DOWNLOAD_SUBFOLDER).replace(/\\/g, '/').replace(/\/$/, '');
+    _cachedSubfolder = folder;
+    chrome.storage.local.set({ downloadSubfolder: folder })
       .then(() => sendResponse({ ok: true }))
       .catch(err => sendResponse({ ok: false, err: err.message }));
     return true;
@@ -489,36 +508,13 @@ function waitForDownload(timeoutMs = 45000) {
       reject(new Error('Download did not start within 45 seconds'));
     }, timeoutMs);
 
-    async function onCreated(item) {
+    function onCreated(item) {
       clearTimeout(timer);
       chrome.downloads.onCreated.removeListener(onCreated);
-
-      // Cancel the browser-initiated download so we can re-initiate it with:
-      //   • our custom filename (student name + id)
-      //   • saveAs: false (no Save As dialog, regardless of Chrome's setting)
-      //   • our preferred subfolder
-      const name = state.pendingDownloadName;
-      state.pendingDownloadName = null;
-
-      if (name) {
-        try { await chrome.downloads.cancel(item.id); } catch (_) {}
-        const subfolder = await getDownloadSubfolder();
-        const filename = subfolder + '/' + name;
-        chrome.downloads.download(
-          { url: item.url, filename, saveAs: false, conflictAction: 'uniquify' },
-          newId => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-            } else {
-              state.lastDownloadId = newId;
-              waitForDownloadComplete(newId, 120000).then(resolve).catch(reject);
-            }
-          }
-        );
-      } else {
-        state.lastDownloadId = item.id;
-        waitForDownloadComplete(item.id, 120000).then(resolve).catch(reject);
-      }
+      // onDeterminingFilename already redirected the file to our subfolder.
+      // Just wait for this download to complete.
+      state.lastDownloadId = item.id;
+      waitForDownloadComplete(item.id, 120000).then(resolve).catch(reject);
     }
     chrome.downloads.onCreated.addListener(onCreated);
   });
