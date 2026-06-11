@@ -216,14 +216,17 @@ async function openDownloadFolder() {
     chrome.downloads.show(state.lastDownloadId);
     return;
   }
+  // Drop a marker file in the preferred subfolder so we can reveal that folder.
+  // Must use safeDownloadPath — leading dots and illegal chars cause "Invalid filename".
   const subfolder = await getDownloadSubfolder();
+  const markerPath = safeDownloadPath(subfolder, 'asap-open-folder.tmp');
   chrome.downloads.download({
     url: 'data:text/plain,',
-    filename: subfolder + '/.asap-folder-marker.txt',
+    filename: markerPath,
     saveAs: false,
     conflictAction: 'overwrite',
   }, id => {
-    if (id == null) return;
+    if (id == null) { chrome.downloads.showDefaultFolder(); return; }
     function onChange(delta) {
       if (delta.id !== id) return;
       const st = delta.state?.current;
@@ -235,6 +238,7 @@ async function openDownloadFolder() {
         }, 1500);
       } else if (st === 'interrupted') {
         chrome.downloads.onChanged.removeListener(onChange);
+        chrome.downloads.showDefaultFolder();
       }
     }
     chrome.downloads.onChanged.addListener(onChange);
