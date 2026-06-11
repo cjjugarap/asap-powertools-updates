@@ -460,19 +460,35 @@ function waitForDownloadComplete(downloadId, timeoutMs = 60000) {
 // Must be entirely self-contained — no closures over outer variables.
 
 async function executeStepInPage(step) {
-  // Returns a Promise that resolves when the ASP.NET UpdatePanel finishes its
-  // current AJAX postback, or immediately if no postback is in flight.
-  // This lets us wait exactly as long as the server needs — no guessing.
-  function waitForPostback(timeoutMs) {
+  // Waits for an ASP.NET UpdatePanel postback to complete.
+  // Uses beginRequest to detect whether a postback actually started (fires
+  // client-side within ms of the action). If nothing starts within 300ms the
+  // click didn't trigger a postback and we move on immediately. If one starts,
+  // we wait for endRequest — however long the server actually takes (up to 30s).
+  function waitForPostback() {
     return new Promise((resolve) => {
       try {
         const mgr = window.Sys &&
                     window.Sys.WebForms &&
+                    window.Sys.WebForms.PageRequestManager &&
                     window.Sys.WebForms.PageRequestManager.getInstance();
         if (!mgr) return resolve('no-updatepanel');
-        const tid = setTimeout(() => { mgr.remove_endRequest(h); resolve('timeout'); }, timeoutMs);
-        function h() { clearTimeout(tid); mgr.remove_endRequest(h); resolve('done'); }
-        mgr.add_endRequest(h);
+
+        // Window to detect if a postback started at all.
+        const detectTid = setTimeout(() => {
+          mgr.remove_beginRequest(onBegin);
+          resolve('no-postback');
+        }, 300);
+
+        function onBegin() {
+          clearTimeout(detectTid);
+          mgr.remove_beginRequest(onBegin);
+          // Postback started — now wait for it to finish.
+          const endTid = setTimeout(() => { mgr.remove_endRequest(onEnd); resolve('timeout'); }, 30000);
+          function onEnd() { clearTimeout(endTid); mgr.remove_endRequest(onEnd); resolve('done'); }
+          mgr.add_endRequest(onEnd);
+        }
+        mgr.add_beginRequest(onBegin);
       } catch (_) { resolve('error'); }
     });
   }
@@ -543,15 +559,17 @@ async function executeStepInPage(step) {
       const origOpen = window.open;
       window.open = (url) => { capturedUrl = String(url); return null; };
       // Register UpdatePanel listener BEFORE the click so we don't miss the event.
-      const postback = waitForPostback(30000);
+      const postback = waitForPostback();
       el.click();
       window.open = origOpen;
       if (capturedUrl) {
         return { ok: true, openHref: new URL(capturedUrl, location.href).href };
       }
       const reason = await postback;
-      // 'done' = UpdatePanel finished. 'no-updatepanel' / 'error' = full nav or static.
-      return { ok: true, waitForNav: reason !== 'done' };
+      // 'done'        → postback finished, DOM updated, no further wait needed
+      // 'no-postback' → click didn't trigger AJAX (e.g. opening a dropdown) — move on
+      // 'no-updatepanel' / 'error' / 'timeout' → fall back to tab-load detection
+      return { ok: true, postbackReason: reason, waitForNav: reason !== 'done' && reason !== 'no-postback' };
     }
 
     // ── select_option ────────────────────────────────────────────
@@ -567,10 +585,10 @@ async function executeStepInPage(step) {
         }
       }
       if (!found) return { ok: false, err: `Option not found: ${step.label || step.value}` };
-      const postback = waitForPostback(30000);
+      const postback = waitForPostback();
       dispatch(el, ['change', 'input']);
       const reason = await postback;
-      return { ok: true, waitForNav: reason !== 'done' };
+      return { ok: true, postbackReason: reason, waitForNav: reason !== 'done' && reason !== 'no-postback' };
     }
 
     // ── select_kendo ─────────────────────────────────────────────
@@ -779,6 +797,7 @@ async function runStudent(template, studentId, vars, idx, total) {
         swapped: result.swapped,
         downloadedFile: result.downloadedFile,
         openHref: result.openHref ? debugRedact(result.openHref) : undefined,
+        postback: result.postbackReason,
       });
 
       if (!result.ok) {
