@@ -138,7 +138,8 @@ let state = {
   skipped: 0,
   pendingDownloadName: null,
   pendingDownloadUrl: null,       // captured in onDeterminingFilename for retry
-  lastSuggestedFilename: null,    // the path we passed to suggest(), for retry
+  lastSuggestedFilename: null,    // the sanitized path, reused for retry
+  retryDownloadName: null,        // consumed by onDeterminingFilename for the retry download
   currentStudentId: null,
   currentStudentName: null,
   lastDownloadId: null,
@@ -157,6 +158,7 @@ function resetState() {
     pendingDownloadName: null,
     pendingDownloadUrl: null,
     lastSuggestedFilename: null,
+    retryDownloadName: null,
     currentStudentId: null,
     currentStudentName: null,
     lastDownloadId: null,
@@ -199,19 +201,35 @@ function safeDownloadPath(subfolder, filename) {
 }
 
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  // Retry download — provide the correct filename via suggest().
+  // saveAs:false in the chrome.downloads.download() call prevents the dialog.
+  if (state.retryDownloadName) {
+    const filename = state.retryDownloadName;
+    state.retryDownloadName = null;
+    suggest({ filename, conflictAction: 'uniquify' });
+    return;
+  }
+
+  // Primary (page-triggered) download.
+  // Capture the URL/filename, cancel this download immediately so Chrome
+  // never shows a Save As dialog, then let the USER_CANCELED path in
+  // runStep re-initiate it silently via chrome.downloads.download({ saveAs:false }).
   if (state.pendingDownloadName) {
     const name = state.pendingDownloadName;
     state.pendingDownloadName = null;
-    // Capture URL and filename so we can retry silently if Chrome cancels.
     state.pendingDownloadUrl = item.url || null;
+    let filename = name;
     try {
-      const filename = safeDownloadPath(_cachedSubfolder, name);
-      state.lastSuggestedFilename = filename;
-      suggest({ filename, conflictAction: 'uniquify' });
-    } catch (_) {
-      state.lastSuggestedFilename = null;
-      suggest();
-    }
+      filename = safeDownloadPath(_cachedSubfolder, name);
+    } catch (_) {}
+    state.lastSuggestedFilename = filename;
+    state.retryDownloadName = filename; // pre-loaded for the retry's onDeterminingFilename call
+
+    // suggest() must be called to release the download from the
+    // "determining filename" state; cancel() immediately after aborts it
+    // before Chrome writes any bytes or shows a dialog.
+    suggest({ filename, conflictAction: 'uniquify' });
+    chrome.downloads.cancel(item.id);
   }
 });
 
@@ -930,14 +948,19 @@ function sanitizeFilename(s) {
 // which bypasses Chrome's dialog entirely regardless of that setting.
 
 function retryDownloadSilent(url, filename) {
+  // Ensure onDeterminingFilename has the filename ready for the retry download.
+  // (It's usually pre-set in onDeterminingFilename already; this is a fallback.)
+  if (!state.retryDownloadName) state.retryDownloadName = filename;
   return new Promise((resolve, reject) => {
+    // No 'filename' here — onDeterminingFilename intercepts this download
+    // and calls suggest() with the correct path. saveAs:false prevents any dialog.
     chrome.downloads.download({
       url,
-      filename,
       saveAs: false,
       conflictAction: 'uniquify',
     }, (id) => {
       if (chrome.runtime.lastError || id == null) {
+        state.retryDownloadName = null;
         reject(new Error(chrome.runtime.lastError?.message || 'Could not initiate retry download'));
         return;
       }
@@ -1100,15 +1123,25 @@ async function runStep(step) {
     }
   }
 
+  // DOM-settle wait: poll page fingerprint until stable (like navigator.py's
+  // _wait_for_change). Resolves when DOM hasn't changed for 600ms, or 25s max.
+  if (step.waitForDomSettle) {
+    log('Waiting for report to finish rendering…', 'muted');
+    await waitForDomSettle(state.activeTabId, 600, 25000);
+    log('Report ready — saving PDF…', 'muted');
+  }
+
   // Download handling (btnPrint triggers a download after its click).
   if (downloadPromise) {
+    log('Downloading transcript…', 'muted');
     try {
       const dlItem = await downloadPromise;
       const filename = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : 'file';
       result.downloadedFile = filename;
     } catch (e) {
-      // USER_CANCELED: Chrome showed a "Save As" dialog (likely "Ask where to
-      // save each file" is enabled). Retry using saveAs:false to force silent.
+      // USER_CANCELED means Chrome tried to show a Save As dialog.
+      // We pre-canceled the download in onDeterminingFilename; the retry
+      // re-initiates it silently via chrome.downloads.download({ saveAs:false }).
       if ((e.message || '').includes('USER_CANCELED')
           && state.pendingDownloadUrl
           && state.lastSuggestedFilename) {
@@ -1124,12 +1157,6 @@ async function runStep(step) {
         return { ok: false, err: 'Download failed: ' + e.message };
       }
     }
-  }
-
-  // DOM-settle wait: poll page fingerprint until stable (like navigator.py's
-  // _wait_for_change). Resolves when DOM hasn't changed for 600ms, or 25s max.
-  if (step.waitForDomSettle) {
-    await waitForDomSettle(state.activeTabId, 600, 25000);
   }
 
   return result;
