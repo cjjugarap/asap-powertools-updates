@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ASAP Powertools",
-  "version": "2.16",
+  "version": "2.17",
   "description": "Run ASAP Connected workflows automatically. No PII captured.",
   "permissions": [
     "scripting",
