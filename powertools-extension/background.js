@@ -520,16 +520,18 @@ function executeStepInPage(step) {
     if (t === 'click') {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
-      // onclick="window.open('url', ...)" can't be triggered by an injected
-      // click (not a trusted gesture). Extract the URL and open it directly.
-      if (el.tagName === 'A') {
-        const onclick = el.getAttribute('onclick') || '';
-        const m = onclick.match(/window\.open\(\s*['"]([^'"]+)['"]/);
-        if (m) {
-          return { ok: true, waitForNav: false, openHref: new URL(m[1], location.href).href };
-        }
-      }
+      // Intercept window.open so we can capture the popup URL regardless of
+      // how the onclick calls it (direct or through a wrapper function).
+      // Injected clicks aren't trusted gestures so window.open gets blocked —
+      // we capture the URL instead and let background open the tab directly.
+      let capturedUrl = null;
+      const origOpen = window.open;
+      window.open = (url) => { capturedUrl = String(url); return null; };
       el.click();
+      window.open = origOpen;
+      if (capturedUrl) {
+        return { ok: true, waitForNav: false, openHref: new URL(capturedUrl, location.href).href };
+      }
       return { ok: true, waitForNav: true };
     }
 
@@ -680,11 +682,14 @@ async function runStep(step) {
   }
 
   // If a postback/navigation was triggered, wait for the page to settle.
+  // ASP.NET UpdatePanel clicks use AJAX and don't trigger a full tab load,
+  // so we use a short timeout and fall back to a fixed delay if nothing fires.
   if (result.waitForNav) {
     try {
-      await waitForTabLoad(tabId, 10000);
+      await waitForTabLoad(tabId, 1500);
     } catch (_) {
-      // Tab may not have navigated at all — that's fine.
+      // AJAX postback — tab never changed status. Give it a moment to settle.
+      await new Promise(r => setTimeout(r, 500));
     }
   }
 
