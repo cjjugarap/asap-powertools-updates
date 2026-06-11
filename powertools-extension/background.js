@@ -711,63 +711,45 @@ async function executeStepInPage(step) {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
 
-      // btnPrint: intercept the form POST from the page context (same-origin,
-      // so session cookies are included automatically). This bypasses Chrome's
-      // entire download pipeline — no onCreated, no dialog, no Save As prompt.
+      // btnPrint: the button calls window.open(pdfUrl) to trigger the download.
+      // Intercept that URL and fetch the PDF directly from the page context
+      // (same-origin, session cookies included) — bypasses Chrome's download
+      // pipeline entirely: no onCreated, no dialog, no Save As prompt.
       const isPrint = loc.id === 'btnPrint' || (loc.id_suffix || '') === 'btnPrint';
       if (isPrint) {
-        const form = el.closest('form') || document.forms[0];
-        if (form) {
+        let capturedPdfUrl = null;
+        const origOpenPrint = window.open;
+        window.open = (url) => { capturedPdfUrl = String(url); return null; };
+        const postbackPrint = waitForPostback();
+        el.click();
+        window.open = origOpenPrint;
+        await postbackPrint;
+
+        if (capturedPdfUrl) {
           try {
-            const fd = new FormData(form);
-            // Detect how the button triggers the postback:
-            //   A) __doPostBack style: onclick="javascript:__doPostBack('ctl00$...$btnPrint','')"
-            //      → set __EVENTTARGET to the UniqueID extracted from onclick
-            //   B) Regular submit button: include button's name/value pair
-            const onclick = (el.getAttribute('onclick') || '').trim();
-            const doPostBackMatch = onclick.match(/__doPostBack\s*\(\s*['"]([^'"]+)['"]/);
-            if (doPostBackMatch) {
-              fd.set('__EVENTTARGET', doPostBackMatch[1]);
-              fd.set('__EVENTARGUMENT', '');
-            } else {
-              if (el.name) fd.set(el.name, el.value || 'Print');
-              fd.set('__EVENTTARGET', '');
-              fd.set('__EVENTARGUMENT', '');
-            }
-            // Build URL-encoded body (fetch with FormData sends multipart which
-            // ASP.NET classic WebForms does not always parse correctly).
-            const params = new URLSearchParams();
-            for (const [k, v] of fd.entries()) {
-              if (typeof v === 'string') params.append(k, v);
-            }
-            const postUrl = new URL(form.action || location.href, location.href).href;
-            const resp = await fetch(postUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: params.toString(),
-              credentials: 'same-origin',
-            });
+            const pdfUrl = new URL(capturedPdfUrl, location.href).href;
+            const resp = await fetch(pdfUrl, { credentials: 'same-origin' });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const ct = (resp.headers.get('content-type') || '').toLowerCase();
             if (!ct.includes('pdf') && !ct.includes('octet-stream')) {
-              // Return enough of the response body for diagnosis.
               const snippet = await resp.clone().text().then(t => t.slice(0, 300)).catch(() => '');
-              throw new Error(`Unexpected content-type: ${ct.slice(0, 80)} | body: ${snippet}`);
+              throw new Error(`Expected PDF, got ${ct.slice(0, 60)} | ${snippet}`);
             }
             const buf = await resp.arrayBuffer();
             const u8 = new Uint8Array(buf);
-            // Chunk-encode to avoid call-stack overflow on large PDFs.
             let bin = '';
             for (let i = 0; i < u8.length; i += 0x8000) {
               bin += String.fromCharCode(...u8.subarray(i, Math.min(i + 0x8000, u8.length)));
             }
             return { ok: true, pdfBase64: btoa(bin) };
           } catch (fetchErr) {
-            const onclick = (el.getAttribute('onclick') || '').slice(0, 120);
             return { ok: false, err: 'PDF fetch failed: ' + fetchErr.message,
-                     diag: { onclick, elName: el.name, elId: el.id } };
+                     diag: { capturedPdfUrl } };
           }
         }
+
+        // window.open was NOT called — fall through to normal download handling.
+        return { ok: true, postbackReason: 'no-postback', waitForNav: false };
       }
 
       // Intercept window.open — injected clicks aren't trusted gestures so
