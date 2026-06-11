@@ -14,6 +14,7 @@
       "type": "click",
       "role": "link",
       "name": "Return to ASAP Classic",
+      "optional": true,
       "nth": 1,
       "locators": {
         "id": "appReturnBtn"

@@ -765,6 +765,11 @@ async function runStudent(template, studentId, vars, idx, total) {
       });
 
       if (!result.ok) {
+        if (step.optional) {
+          log(`Skipped optional step "${step.name || step.type}": ${result.err}`, 'muted');
+          debugPush({ event: 'step_skipped', stepIndex: i, reason: result.err });
+          continue;
+        }
         log(`Could not complete: ${result.err}`, 'err');
         debugPush({ event: 'student_fail', stepIndex: i });
         return 'failed';
