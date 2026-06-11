@@ -593,13 +593,22 @@ async function executeStepInPage(step) {
 
     // ── select_kendo ─────────────────────────────────────────────
     if (t === 'select_kendo') {
-      const el = findEl(loc, null, null, 0);
-      if (!el) return { ok: false, err: 'Kendo element not found' };
-      const jq = window.jQuery || window.$;
-      if (!jq) return { ok: false, err: 'jQuery not available on this page' };
-      const widget = jq(el).data('kendoDropDownList') ||
-                     jq(el).data('kendoComboBox');
-      if (!widget) return { ok: false, err: 'Kendo widget not found on element' };
+      // jQuery and Kendo widgets may finish initializing after the tab reports
+      // 'complete'. Poll until they're ready (up to 8 seconds).
+      const deadline = Date.now() + 8000;
+      let el, jq, widget;
+      while (Date.now() < deadline) {
+        el  = findEl(loc, null, null, 0);
+        jq  = window.jQuery || window.$;
+        if (el && jq) {
+          widget = jq(el).data('kendoDropDownList') || jq(el).data('kendoComboBox');
+          if (widget) break;
+        }
+        await new Promise(r => setTimeout(r, 150));
+      }
+      if (!el)     return { ok: false, err: 'Kendo element not found after 8s' };
+      if (!jq)     return { ok: false, err: 'jQuery not available after 8s' };
+      if (!widget) return { ok: false, err: 'Kendo widget not initialized after 8s' };
       widget.value(step.value);
       widget.trigger('change');
       return { ok: true, waitForNav: false };
@@ -811,6 +820,7 @@ async function runStudent(template, studentId, vars, idx, total) {
         type: step.type,
         name: step.name || undefined,
         locator: (step.locators || {}).id_suffix || (step.locators || {}).id || undefined,
+        tabId: state.activeTabId,
         ok: result.ok,
         ms,
         err: result.ok ? undefined : result.err,
