@@ -671,6 +671,33 @@ async function executeStepInPage(step) {
                  diag: { options: Array.from(sel.options).map(o => o.text.trim()) } };
       }
 
+      // Kendo DOM-only fallback: widget rendered its HTML but exposed no JS API.
+      // Pattern: <input id="X"> drives a <ul id="X_listbox"> with <li> items.
+      // Click the input to open the dropdown, then click the matching <li>.
+      const listbox = document.getElementById(`${exactId}_listbox`)
+                   || document.getElementById(`${idSuffix}_listbox`);
+      if (input && listbox) {
+        const want = wantText.toLowerCase();
+        // Open the dropdown by clicking the input.
+        input.click();
+        input.focus();
+        await new Promise(r => setTimeout(r, 300));
+        // Find matching <li> — list may have been populated after click.
+        const li = Array.from(listbox.querySelectorAll('li')).find(
+          li => li.textContent.trim().toLowerCase() === want
+        );
+        if (li) {
+          li.click();
+          await new Promise(r => setTimeout(r, 150));
+          // Verify: input value should now match.
+          const got = (input.value || '').trim();
+          return { ok: true, note: `DOM-click selected "${got}"` };
+        }
+        const available = Array.from(listbox.querySelectorAll('li')).map(l => l.textContent.trim());
+        return { ok: false, err: `Option "${wantText}" not found in Kendo listbox`,
+                 diag: { available } };
+      }
+
       // Nothing found — emit diagnostics so the debug log is self-explaining.
       const diag = {
         hasJQuery:  !!(window.jQuery || window.$),
