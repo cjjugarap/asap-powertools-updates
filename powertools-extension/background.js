@@ -520,10 +520,19 @@ function executeStepInPage(step) {
     if (t === 'click') {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
-      // If this is a link with an href, return it so the background can open
-      // it directly — injected clicks can't trigger window.open (not trusted).
-      if (el.tagName === 'A' && el.href && !el.href.startsWith('javascript')) {
-        return { ok: true, waitForNav: false, openHref: el.href };
+      // Injected clicks can't trigger window.open (not a trusted gesture).
+      // Return the target URL so background can open it directly instead.
+      if (el.tagName === 'A') {
+        const href = el.href || '';
+        if (href && !href.startsWith('javascript')) {
+          return { ok: true, waitForNav: false, openHref: href };
+        }
+        // onclick="window.open('url', ...)" pattern used by ASP.NET links
+        const onclick = el.getAttribute('onclick') || '';
+        const m = onclick.match(/window\.open\(\s*['"]([^'"]+)['"]/);
+        if (m) {
+          return { ok: true, waitForNav: false, openHref: new URL(m[1], location.href).href };
+        }
       }
       el.click();
       return { ok: true, waitForNav: true };
@@ -669,8 +678,13 @@ async function runStep(step) {
   // Link clicks: background opens the href directly to bypass popup blocker.
   if (result.openHref) {
     const url = result.openHref;
-    // Detect popup-style links (transcript report opens in a new window).
-    const isPopup = url.includes('CustomerTranscript') || url.includes('Report');
+    // If the link came from an onclick/window.open it should open as a new tab.
+    // Also treat any link that changes the page as a same-tab navigation.
+    const currentTab = await chrome.tabs.get(tabId);
+    const sameOrigin = url.startsWith(new URL(currentTab.url).origin);
+    const isPopup = !sameOrigin || step.name === 'View Transcript Report'
+                    || url.includes('CustomerTranscript') || url.includes('Popup')
+                    || (step.locators || {}).id_suffix === 'aTranscriptReport';
     if (isPopup) {
       const newTab = await chrome.tabs.create({ url, active: false });
       state.popupTabId = newTab.id;
@@ -762,6 +776,7 @@ async function runStudent(template, studentId, vars, idx, total) {
         note: result.note || undefined,
         swapped: result.swapped,
         downloadedFile: result.downloadedFile,
+        openHref: result.openHref ? debugRedact(result.openHref) : undefined,
       });
 
       if (!result.ok) {
