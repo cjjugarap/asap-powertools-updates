@@ -915,6 +915,70 @@ function sanitizeFilename(s) {
           .slice(0, 120) || 'download';
 }
 
+// ── DOM-settle helper ─────────────────────────────────────────────────────────
+// Mirrors navigator.py's _wait_for_change: polls the page DOM fingerprint
+// every 200ms and resolves once it's been stable for `stableMs`, or after
+// `timeoutMs` regardless. Never rejects — a timeout just means we proceed.
+
+function waitForDomSettle(tabId, stableMs = 600, timeoutMs = 25000) {
+  return new Promise(resolve => {
+    const pollInterval = 200;
+    let lastFp = null;
+    let stableSince = null;
+    const deadline = Date.now() + timeoutMs;
+
+    async function fingerprint() {
+      try {
+        const [{ result }] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const all = document.querySelectorAll('*');
+            // Combine node count + total text length as a cheap fingerprint.
+            let textLen = 0;
+            for (const el of all) {
+              if (el.childNodes) {
+                for (const n of el.childNodes) {
+                  if (n.nodeType === 3) textLen += (n.nodeValue || '').length;
+                }
+              }
+            }
+            return `${all.length}:${textLen}`;
+          },
+        });
+        return result || '';
+      } catch (_) {
+        return null;
+      }
+    }
+
+    async function poll() {
+      const fp = await fingerprint();
+      const now = Date.now();
+
+      if (fp !== null && fp === lastFp) {
+        // Fingerprint unchanged — check if stable long enough.
+        if (stableSince === null) stableSince = now;
+        if (now - stableSince >= stableMs) {
+          resolve('stable');
+          return;
+        }
+      } else {
+        // Changed (or first read) — reset stable timer.
+        lastFp = fp;
+        stableSince = null;
+      }
+
+      if (now >= deadline) {
+        resolve('timeout');
+        return;
+      }
+      setTimeout(poll, pollInterval);
+    }
+
+    poll();
+  });
+}
+
 // ── Run one step ──────────────────────────────────────────────────────────────
 
 async function runStep(step) {
@@ -1015,10 +1079,10 @@ async function runStep(step) {
     }
   }
 
-  // Optional post-step delay: give the page time to finish rendering before
-  // the next step runs (useful after btnFilter when ASAP builds the report).
-  if (step.waitAfterMs && step.waitAfterMs > 0) {
-    await new Promise(r => setTimeout(r, step.waitAfterMs));
+  // DOM-settle wait: poll page fingerprint until stable (like navigator.py's
+  // _wait_for_change). Resolves when DOM hasn't changed for 600ms, or 25s max.
+  if (step.waitForDomSettle) {
+    await waitForDomSettle(state.activeTabId, 600, 25000);
   }
 
   return result;

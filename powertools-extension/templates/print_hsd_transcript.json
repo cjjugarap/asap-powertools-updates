@@ -132,7 +132,7 @@
       "locators": {
         "id": "btnFilter"
       },
-      "waitAfterMs": 10000
+      "waitForDomSettle": true
     },
     {
       "type": "click",
