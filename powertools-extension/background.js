@@ -593,8 +593,27 @@ async function executeStepInPage(step) {
 
     // ── select_kendo ─────────────────────────────────────────────
     if (t === 'select_kendo') {
-      // Helper: get Kendo widget via jQuery OR native kendo.widgetInstance()
-      // (newer Kendo runs without jQuery; both APIs must be tried).
+      const wantText = (step.label || step.value || '').trim();
+      const exactId  = loc.id || null;
+      const idSuffix = loc.id_suffix || loc.id || null;
+
+      // Mirror navigator.py: find the Kendo INPUT (not a <select>).
+      // Kendo builds a visible <input> for its ComboBox/DropDownList;
+      // getElementById may or may not return it depending on how the
+      // widget was initialised, so also search input[id$=suffix].
+      function findKendoInput() {
+        if (exactId) {
+          const byId = document.getElementById(exactId);
+          if (byId) return byId;
+        }
+        if (idSuffix) {
+          for (const el of document.querySelectorAll('input[id]')) {
+            if (el.id === idSuffix || el.id.endsWith(idSuffix)) return el;
+          }
+        }
+        return null;
+      }
+
       function getWidget(el) {
         if (!el) return null;
         const jq = window.jQuery || window.$;
@@ -608,41 +627,61 @@ async function executeStepInPage(step) {
         return null;
       }
 
-      // Poll until the element exists AND either a Kendo widget is attached
-      // OR Kendo has fully loaded (so we know it's simply a plain <select>).
-      const deadline = Date.now() + 5000;
-      let el, widget;
+      // Poll up to 10s — jQuery may load well after tab 'complete' on popup pages.
+      const deadline = Date.now() + 10000;
+      let input, widget;
       while (Date.now() < deadline) {
-        el = findEl(loc, null, null, 0);
-        widget = getWidget(el);
-        const kendoReady = window.kendo || window.jQuery || window.$;
-        if (widget || (el && kendoReady)) break;
-        await new Promise(r => setTimeout(r, 150));
+        input  = findKendoInput();
+        widget = getWidget(input);
+        if (widget) break;
+        await new Promise(r => setTimeout(r, 200));
       }
 
       if (widget) {
-        widget.value(step.value);
+        // Use widget.select(fn) like navigator.py — matches by display text.
+        const want = wantText.toLowerCase();
+        widget.select(function(dataItem) {
+          const tf = widget.options && widget.options.dataTextField;
+          const label = tf ? dataItem[tf] : (dataItem.text || String(dataItem));
+          return String(label).trim().toLowerCase() === want;
+        });
         widget.trigger('change');
+        const got = (widget.text() || '').trim();
+        if (got.toLowerCase() !== wantText.toLowerCase()) {
+          return { ok: false, err: `Kendo selected "${got}" but wanted "${wantText}"`,
+                   diag: { got, wantText } };
+        }
         return { ok: true };
       }
 
-      // No widget — try plain <select> (hidden select Kendo wraps, or no Kendo at all).
-      let sel = el && el.tagName === 'SELECT' ? el : null;
-      if (!sel) sel = document.querySelector(`select[id*="${loc.id || loc.id_suffix || ''}"]`);
+      // Kendo not found — fall back to plain <select> (covers pages without Kendo).
+      let sel = null;
+      if (exactId) sel = document.querySelector(`select[id="${exactId}"]`);
+      if (!sel && idSuffix) sel = document.querySelector(`select[id$="${idSuffix}"]`);
       if (!sel) sel = findEl(loc, 'combobox', null, 0);
       if (sel && sel.tagName === 'SELECT') {
-        const target = step.value || step.label || '';
         for (const opt of sel.options) {
-          if (opt.value === target || opt.text.trim() === target) {
+          if (opt.value === wantText || opt.text.trim().toLowerCase() === wantText.toLowerCase()) {
             sel.value = opt.value;
             dispatch(sel, ['change', 'input']);
             return { ok: true, waitForNav: true };
           }
         }
-        return { ok: false, err: `Option "${target}" not found in <select>` };
+        return { ok: false, err: `Option "${wantText}" not found in <select>`,
+                 diag: { options: Array.from(sel.options).map(o => o.text.trim()) } };
       }
 
-      return { ok: false, err: `Kendo widget not found and no <select> fallback for "${loc.id || loc.id_suffix}"` };
+      // Nothing found — emit diagnostics so the debug log is self-explaining.
+      const diag = {
+        hasJQuery:  !!(window.jQuery || window.$),
+        hasKendo:   !!(window.kendo),
+        inputFound: !!input,
+        inputTag:   input ? input.tagName : null,
+        inputId:    input ? input.id : null,
+        selectsWithId: Array.from(document.querySelectorAll(`[id*="${idSuffix}"]`))
+                          .map(e => ({ tag: e.tagName, id: e.id })),
+      };
+      return { ok: false, err: `Kendo widget not found and no <select> fallback for "${exactId}"`, diag };
     }
 
     // ── check (checkbox) ─────────────────────────────────────────
@@ -855,6 +894,7 @@ async function runStudent(template, studentId, vars, idx, total) {
         ok: result.ok,
         ms,
         err: result.ok ? undefined : result.err,
+        diag: result.ok ? undefined : result.diag,
         note: result.note || undefined,
         swapped: result.swapped,
         downloadedFile: result.downloadedFile,
