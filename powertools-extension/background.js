@@ -722,8 +722,12 @@ async function executeStepInPage(step) {
         window.open = (url) => { capturedPdfUrl = String(url); return null; };
         const postbackPrint = waitForPostback();
         el.click();
-        window.open = origOpenPrint;
-        await postbackPrint;
+        // Wait for any postback/AJAX to complete BEFORE restoring window.open.
+        // The button may call window.open asynchronously in its server response
+        // callback — restoring early would miss it.
+        try { await postbackPrint; } finally { window.open = origOpenPrint; }
+        // Give async JS one more tick in case window.open fires after postback.
+        await new Promise(r => setTimeout(r, 100));
 
         if (capturedPdfUrl) {
           try {
