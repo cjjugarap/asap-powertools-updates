@@ -520,14 +520,9 @@ function executeStepInPage(step) {
     if (t === 'click') {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
-      // Injected clicks can't trigger window.open (not a trusted gesture).
-      // Return the target URL so background can open it directly instead.
+      // onclick="window.open('url', ...)" can't be triggered by an injected
+      // click (not a trusted gesture). Extract the URL and open it directly.
       if (el.tagName === 'A') {
-        const href = el.href || '';
-        if (href && !href.startsWith('javascript')) {
-          return { ok: true, waitForNav: false, openHref: href };
-        }
-        // onclick="window.open('url', ...)" pattern used by ASP.NET links
         const onclick = el.getAttribute('onclick') || '';
         const m = onclick.match(/window\.open\(\s*['"]([^'"]+)['"]/);
         if (m) {
@@ -675,25 +670,12 @@ async function runStep(step) {
 
   if (!result.ok) return result;
 
-  // Link clicks: background opens the href directly to bypass popup blocker.
+  // openHref is only set when the link uses onclick=window.open() — always a popup.
   if (result.openHref) {
-    const url = result.openHref;
-    // If the link came from an onclick/window.open it should open as a new tab.
-    // Also treat any link that changes the page as a same-tab navigation.
-    const currentTab = await chrome.tabs.get(tabId);
-    const sameOrigin = url.startsWith(new URL(currentTab.url).origin);
-    const isPopup = !sameOrigin || step.name === 'View Transcript Report'
-                    || url.includes('CustomerTranscript') || url.includes('Popup')
-                    || (step.locators || {}).id_suffix === 'aTranscriptReport';
-    if (isPopup) {
-      const newTab = await chrome.tabs.create({ url, active: false });
-      state.popupTabId = newTab.id;
-      state.activeTabId = newTab.id;
-      await waitForTabLoad(newTab.id, 15000);
-    } else {
-      await chrome.tabs.update(tabId, { url });
-      await waitForTabLoad(tabId, 10000);
-    }
+    const newTab = await chrome.tabs.create({ url: result.openHref, active: false });
+    state.popupTabId = newTab.id;
+    state.activeTabId = newTab.id;
+    await waitForTabLoad(newTab.id, 15000);
     return result;
   }
 
