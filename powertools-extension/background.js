@@ -137,6 +137,8 @@ let state = {
   failed: 0,
   skipped: 0,
   pendingDownloadName: null,
+  pendingDownloadUrl: null,       // captured in onDeterminingFilename for retry
+  lastSuggestedFilename: null,    // the path we passed to suggest(), for retry
   currentStudentId: null,
   currentStudentName: null,
   lastDownloadId: null,
@@ -153,6 +155,8 @@ function resetState() {
     failed: 0,
     skipped: 0,
     pendingDownloadName: null,
+    pendingDownloadUrl: null,
+    lastSuggestedFilename: null,
     currentStudentId: null,
     currentStudentName: null,
     lastDownloadId: null,
@@ -198,11 +202,15 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   if (state.pendingDownloadName) {
     const name = state.pendingDownloadName;
     state.pendingDownloadName = null;
+    // Capture URL and filename so we can retry silently if Chrome cancels.
+    state.pendingDownloadUrl = item.url || null;
     try {
       const filename = safeDownloadPath(_cachedSubfolder, name);
+      state.lastSuggestedFilename = filename;
       suggest({ filename, conflictAction: 'uniquify' });
     } catch (_) {
-      suggest(); // fall back to Chrome's default if anything goes wrong
+      state.lastSuggestedFilename = null;
+      suggest();
     }
   }
 });
@@ -915,6 +923,30 @@ function sanitizeFilename(s) {
           .slice(0, 120) || 'download';
 }
 
+// ── Silent download retry ─────────────────────────────────────────────────────
+// USER_CANCELED usually means Chrome showed a "Save As" dialog (e.g. because
+// the user has "Ask where to save each file" enabled in Chrome settings).
+// Fix: re-initiate the download via chrome.downloads.download with saveAs:false,
+// which bypasses Chrome's dialog entirely regardless of that setting.
+
+function retryDownloadSilent(url, filename) {
+  return new Promise((resolve, reject) => {
+    chrome.downloads.download({
+      url,
+      filename,
+      saveAs: false,
+      conflictAction: 'uniquify',
+    }, (id) => {
+      if (chrome.runtime.lastError || id == null) {
+        reject(new Error(chrome.runtime.lastError?.message || 'Could not initiate retry download'));
+        return;
+      }
+      state.lastDownloadId = id;
+      waitForDownloadComplete(id, 120000).then(resolve).catch(reject);
+    });
+  });
+}
+
 // ── DOM-settle helper ─────────────────────────────────────────────────────────
 // Mirrors navigator.py's _wait_for_change: polls the page DOM fingerprint
 // every 200ms and resolves once it's been stable for `stableMs`, or after
@@ -1075,7 +1107,22 @@ async function runStep(step) {
       const filename = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : 'file';
       result.downloadedFile = filename;
     } catch (e) {
-      return { ok: false, err: 'Download failed: ' + e.message };
+      // USER_CANCELED: Chrome showed a "Save As" dialog (likely "Ask where to
+      // save each file" is enabled). Retry using saveAs:false to force silent.
+      if ((e.message || '').includes('USER_CANCELED')
+          && state.pendingDownloadUrl
+          && state.lastSuggestedFilename) {
+        try {
+          const dlItem = await retryDownloadSilent(state.pendingDownloadUrl, state.lastSuggestedFilename);
+          const filename = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : 'file';
+          result.downloadedFile = filename;
+          result.retried = true;
+        } catch (e2) {
+          return { ok: false, err: 'Download failed after retry: ' + e2.message };
+        }
+      } else {
+        return { ok: false, err: 'Download failed: ' + e.message };
+      }
     }
   }
 
@@ -1155,6 +1202,7 @@ async function runStudent(template, studentId, vars, idx, total) {
         diag: result.ok ? undefined : result.diag,
         note: result.note || undefined,
         swapped: result.swapped,
+        retried: result.retried || undefined,
         downloadedFile: result.downloadedFile,
         openHref: result.openHref ? debugRedact(result.openHref) : undefined,
         postback: result.postbackReason,
