@@ -309,9 +309,10 @@
 
     <div class="setting-group">
       <label>Download folder</label>
-      <p>Subfolder inside your Downloads directory where transcripts are saved.</p>
+      <p>Where transcripts are saved (inside your Downloads directory).</p>
       <div style="display:flex;gap:6px;align-items:center;">
-        <input id="download-folder-input" type="text" placeholder="ASAP Transcripts" style="flex:1">
+        <input id="download-folder-input" type="text" placeholder="ASAP Transcripts" style="flex:1" readonly>
+        <button id="btn-browse-folder" title="Browse for folder" style="flex-shrink:0;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;font-size:11px;white-space:nowrap;">Browse…</button>
         <button id="btn-open-folder" title="Open downloads folder" style="flex-shrink:0;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;font-size:14px;line-height:1;">📂</button>
       </div>
     </div>

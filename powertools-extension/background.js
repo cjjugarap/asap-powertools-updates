@@ -160,14 +160,87 @@ function resetState() {
 }
 
 // ── Download folder preference ────────────────────────────────────────────────
-// The folder is stored as a subfolder path relative to the user's Downloads
-// directory (Chrome extensions cannot write outside Downloads). Default: "ASAP Transcripts".
+// Chrome extensions can only write inside the user's Downloads directory.
+// The setting is stored as a path relative to Downloads (e.g. "ASAP Transcripts").
 
 const DEFAULT_DOWNLOAD_SUBFOLDER = 'ASAP Transcripts';
 
 async function getDownloadSubfolder() {
   const { downloadSubfolder } = await chrome.storage.local.get('downloadSubfolder');
   return (downloadSubfolder || DEFAULT_DOWNLOAD_SUBFOLDER).replace(/\\/g, '/').replace(/\/$/, '');
+}
+
+// Open a saveAs dialog so the user can browse to any subfolder within Downloads.
+// When they save the probe file, we extract the directory from the resulting path,
+// store it, delete the probe file, and send the result back to the panel.
+async function browseForDownloadFolder() {
+  const subfolder = await getDownloadSubfolder();
+  return new Promise((resolve, reject) => {
+    chrome.downloads.download({
+      url: 'data:text/plain,',
+      filename: subfolder + '/pick-this-folder.txt',
+      saveAs: true,
+    }, id => {
+      if (chrome.runtime.lastError || id == null) {
+        reject(new Error(chrome.runtime.lastError?.message || 'cancelled'));
+        return;
+      }
+      function onChange(delta) {
+        if (delta.id !== id) return;
+        const state = delta.state?.current;
+        if (state === 'complete' || state === 'interrupted') {
+          chrome.downloads.onChanged.removeListener(onChange);
+          if (state === 'interrupted') {
+            // User cancelled the dialog.
+            chrome.downloads.erase({ id });
+            reject(new Error('cancelled'));
+            return;
+          }
+          chrome.downloads.search({ id }, ([item]) => {
+            if (!item) { reject(new Error('no item')); return; }
+            // item.filename is the absolute path; extract everything after Downloads/.
+            const full = (item.filename || '').replace(/\\/g, '/');
+            // Match the portion after /Downloads/ (cross-platform).
+            const m = full.match(/[/\\][Dd]ownloads[/\\](.+)[/\\][^/\\]+$/);
+            const relative = m ? m[1] : subfolder;
+            // Save the new setting.
+            chrome.storage.local.set({ downloadSubfolder: relative }, () => {
+              // Delete the probe file.
+              chrome.downloads.removeFile(id, () => chrome.downloads.erase({ id }));
+              resolve(relative);
+            });
+          });
+        }
+      }
+      chrome.downloads.onChanged.addListener(onChange);
+    });
+  });
+}
+
+// Reveal the download folder in the OS file manager.
+// If we have a recent download, show that file (most specific).
+// Otherwise, drop a tiny marker file in the preferred subfolder and reveal it.
+async function openDownloadFolder() {
+  if (state.lastDownloadId != null) {
+    chrome.downloads.show(state.lastDownloadId);
+    return;
+  }
+  const subfolder = await getDownloadSubfolder();
+  chrome.downloads.download({
+    url: 'data:text/plain,',
+    filename: subfolder + '/.asap-folder-marker.txt',
+    saveAs: false,
+    conflictAction: 'overwrite',
+  }, id => {
+    if (id == null) return;
+    // Wait briefly for the file to exist, then reveal + erase it.
+    setTimeout(() => {
+      chrome.downloads.show(id);
+      setTimeout(() => {
+        chrome.downloads.removeFile(id, () => chrome.downloads.erase({ id }));
+      }, 1500);
+    }, 600);
+  });
 }
 
 // ── Debug log ─────────────────────────────────────────────────────────────────
@@ -342,12 +415,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'browse_download_folder') {
+    browseForDownloadFolder()
+      .then(folder => sendResponse({ ok: true, folder }))
+      .catch(err => sendResponse({ ok: false, err: err.message }));
+    return true;
+  }
+
   if (msg.type === 'open_download_folder') {
-    if (state.lastDownloadId != null) {
-      chrome.downloads.show(state.lastDownloadId);
-    } else {
-      chrome.downloads.showDefaultFolder();
-    }
+    openDownloadFolder();
     sendResponse({ ok: true });
     return true;
   }

@@ -37,6 +37,7 @@ const btnReClean      = document.getElementById('btn-re-clean');
 const btnDiscard      = document.getElementById('btn-discard');
 const apiKeyInput         = document.getElementById('api-key-input');
 const downloadFolderInput = document.getElementById('download-folder-input');
+const btnBrowseFolder     = document.getElementById('btn-browse-folder');
 const btnOpenFolder       = document.getElementById('btn-open-folder');
 const btnSaveSettings     = document.getElementById('btn-save-settings');
 const btnBackSettings     = document.getElementById('btn-back-settings');
@@ -349,28 +350,39 @@ apiKeyInput.addEventListener('focus', () => {
 
 btnSaveSettings.addEventListener('click', () => {
   const key = apiKeyInput.value.trim();
-  const folder = downloadFolderInput.value.trim() || 'ASAP Transcripts';
-
-  const saves = [];
-  if (key && key !== '••••••••') {
-    saves.push(new Promise((res, rej) =>
-      chrome.runtime.sendMessage({ type: 'save_settings', apiKey: key }, r =>
-        r && r.ok ? res() : rej())));
+  if (!key || key === '••••••••') {
+    settingsStatus.style.color = 'var(--yellow)';
+    settingsStatus.textContent = 'Enter a new key to update.';
+    return;
   }
-  saves.push(new Promise((res, rej) =>
-    chrome.runtime.sendMessage({ type: 'save_download_folder', folder }, r =>
-      r && r.ok ? res() : rej())));
-
-  Promise.all(saves).then(() => {
-    settingsStatus.style.color = 'var(--green)';
-    settingsStatus.textContent = 'Saved.';
-    if (key && key !== '••••••••') {
+  chrome.runtime.sendMessage({ type: 'save_settings', apiKey: key }, resp => {
+    if (resp && resp.ok) {
+      settingsStatus.style.color = 'var(--green)';
+      settingsStatus.textContent = 'Saved.';
       apiKeyInput.value = '••••••••';
       apiKeyInput.dataset.loaded = 'yes';
+    } else {
+      settingsStatus.style.color = 'var(--red)';
+      settingsStatus.textContent = 'Save failed.';
     }
-  }).catch(() => {
-    settingsStatus.style.color = 'var(--red)';
-    settingsStatus.textContent = 'Save failed.';
+  });
+});
+
+btnBrowseFolder.addEventListener('click', () => {
+  const orig = btnBrowseFolder.textContent;
+  btnBrowseFolder.textContent = 'Waiting…';
+  btnBrowseFolder.disabled = true;
+  chrome.runtime.sendMessage({ type: 'browse_download_folder' }, resp => {
+    btnBrowseFolder.textContent = orig;
+    btnBrowseFolder.disabled = false;
+    if (resp && resp.ok) {
+      downloadFolderInput.value = resp.folder;
+      settingsStatus.style.color = 'var(--green)';
+      settingsStatus.textContent = 'Folder saved.';
+    } else if (resp && resp.err !== 'cancelled') {
+      settingsStatus.style.color = 'var(--red)';
+      settingsStatus.textContent = 'Could not save folder.';
+    }
   });
 });
 
