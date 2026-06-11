@@ -2,19 +2,26 @@
   "meta": {
     "name": "Print HSD Transcript",
     "process": "print_hsd_transcript",
-    "description": "Navigate to a student, correct diploma/graduation dates if swapped, then open the transcript popup with the correct print options (Landscape + Display Diploma Date + Display Graduation Date) and send to print.",
-    "variable": "studentid",
-    "notes": [
-      "Run as a batch from the navigator GUI: load this file, paste student IDs, click Run Batch.",
-      "The swap_dates step is automatic — it only changes the fields if graduation_date > diploma_date.",
-      "The final btnPrint click opens the browser print dialog, which requires manual confirmation.",
-      "The Credits tab 'Select Program' dropdown may be a Kendo/Telerik widget. If select_option fails, change its type to select_kendo."
-    ]
+    "description": "Navigate to a student, select High School Diploma program, correct diploma/graduation dates if swapped, save, then open the transcript popup, select HSD in the popup, set print options, filter, and download the PDF.",
+    "variable": "studentid"
   },
   "steps": [
     {
       "type": "navigate",
-      "url": "https://app.asapconnected.com/StudentDetail.aspx?id={{studentid}}"
+      "url": "https://admin.asapconnected.com/home"
+    },
+    {
+      "type": "click",
+      "role": "link",
+      "name": "Return to ASAP Classic",
+      "nth": 1,
+      "locators": {
+        "id": "appReturnBtn"
+      }
+    },
+    {
+      "type": "navigate",
+      "url": "https://app.asapconnected.com/StudentDetail.aspx?Id={{studentid}}"
     },
     {
       "type": "click",
@@ -24,20 +31,45 @@
       "locators": {}
     },
     {
-      "type": "select_option",
+      "type": "click",
       "role": "combobox",
-      "name": "Select Program",
-      "nth": 0,
-      "label": "High School Diploma",
+      "name": "",
+      "nth": 4,
       "locators": {
         "id": "ContentPlaceHolder1_ddlPrograms",
-        "id_suffix": "ddlPrograms"
+        "id_suffix": "ddlPrograms",
+        "name_attr": "ctl00$ContentPlaceHolder1$ddlPrograms",
+        "name_suffix": "ddlPrograms"
       }
+    },
+    {
+      "type": "select_option",
+      "role": "combobox",
+      "name": "",
+      "nth": 4,
+      "locators": {
+        "id": "ContentPlaceHolder1_ddlPrograms",
+        "id_suffix": "ddlPrograms",
+        "name_attr": "ctl00$ContentPlaceHolder1$ddlPrograms",
+        "name_suffix": "ddlPrograms"
+      },
+      "value": "2356",
+      "label": "High School Diploma"
     },
     {
       "type": "swap_dates",
       "diploma_suffix": "txtDiplomaDate",
       "graduation_suffix": "txtGraduationDate"
+    },
+    {
+      "type": "click",
+      "role": "button",
+      "name": "",
+      "nth": 10,
+      "locators": {
+        "id": "ContentPlaceHolder1_btnsavecreditprogramdetails",
+        "id_suffix": "btnsavecreditprogramdetails"
+      }
     },
     {
       "type": "click",
@@ -57,13 +89,20 @@
       }
     },
     {
+      "type": "select_kendo",
+      "locators": {
+        "id": "cmbProgram",
+        "id_suffix": "cmbProgram"
+      },
+      "value": "High School Diploma"
+    },
+    {
       "type": "check",
       "role": "checkbox",
       "name": "Landscape",
       "nth": 0,
       "locators": {
-        "id": "LandscapeTranscript",
-        "id_suffix": "LandscapeTranscript"
+        "id": "LandscapeTranscript"
       }
     },
     {
@@ -72,8 +111,7 @@
       "name": "Display Diploma Date",
       "nth": 0,
       "locators": {
-        "id": "DisplayDiplomaDate",
-        "id_suffix": "DisplayDiplomaDate"
+        "id": "DisplayDiplomaDate"
       }
     },
     {
@@ -82,8 +120,7 @@
       "name": "Display Graduation Date",
       "nth": 0,
       "locators": {
-        "id": "DisplayGraduationDate",
-        "id_suffix": "DisplayGraduationDate"
+        "id": "DisplayGraduationDate"
       }
     },
     {
@@ -92,8 +129,7 @@
       "name": "",
       "nth": 0,
       "locators": {
-        "id": "btnFilter",
-        "id_suffix": "btnFilter"
+        "id": "btnFilter"
       }
     },
     {
@@ -102,9 +138,15 @@
       "name": "",
       "nth": 1,
       "locators": {
-        "id": "btnPrint",
-        "id_suffix": "btnPrint"
+        "id": "btnPrint"
       }
+    },
+    {
+      "type": "download",
+      "filename": "Transcript.pdf"
+    },
+    {
+      "type": "close_page"
     }
   ]
 }

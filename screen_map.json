@@ -426,7 +426,13 @@
           "id": "ContentPlaceHolder1_rptGroups_lnkDeleteCustomerGroup_0",
           "notes": "Removes a customer group from the student"
         },
-        "transcripts_tab": {
+            "save_credit_program": {
+              "role": "button",
+              "label": "(unlabelled — Save)",
+              "id": "ContentPlaceHolder1_btnsavecreditprogramdetails",
+              "id_suffix": "btnsavecreditprogramdetails",
+              "notes": "Saves the selected credit program and date fields. Must be clicked after swap_dates before navigating to the Transcripts tab."
+            }
           "role": "tab",
           "label": "Transcripts",
           "notes": "Tab on student detail page. Click after Credits tab work to access View Transcript Report link. Tab ID not captured by inspector (RadPageView hidden panel) — click by label.",
@@ -478,6 +484,14 @@
         "display_graduation_date":   { "role": "checkbox", "label": "Display Graduation Date",                      "id": "DisplayGraduationDate",          "default": true  },
         "show_dropped_classes":      { "role": "checkbox", "label": "Show dropped classes",                         "id": "ShowDClasses",                   "default": false },
         "display_grade_level":       { "role": "checkbox", "label": "Display Grade Level",                          "id": "DisplayGradeLevel",              "default": false },
+        "cmb_program": {
+          "role": "combobox",
+          "label": "(Kendo — Program selector)",
+          "id": "cmbProgram",
+          "id_suffix": "cmbProgram",
+          "type": "select_kendo",
+          "notes": "Kendo dropdown inside the transcript popup. Select the program (e.g. High School Diploma) before checking print options."
+        },
         "btn_filter": {
           "role": "button",
           "label": "(unlabelled — Filter)",
@@ -559,7 +573,15 @@
           "tab": "credits",
           "action": "verify_and_correct",
           "rule": "data_correction_rule",
-          "notes": "Read both date fields. If graduation_date > diploma_date, swap the values and save. Diploma Date must be the later date."
+          "notes": "Read both date fields. If graduation_date > diploma_date, swap the values. Diploma Date must be the later date."
+        },
+        {
+          "step": "5b",
+          "screen": "student_detail",
+          "tab": "credits",
+          "action": "click",
+          "element": "save_credit_program",
+          "notes": "Save the credit program details before switching tabs. btnsavecreditprogramdetails."
         },
         {
           "step": 6,
@@ -576,6 +598,14 @@
           "element": "view_transcript_report",
           "notes": "Link inside the Transcripts tab — opens the report popup in a new window",
           "then": "transcript_report_popup"
+        },
+        {
+          "step": "7b",
+          "screen": "transcript_report_popup",
+          "action": "select_kendo",
+          "element": "cmb_program",
+          "value": "High School Diploma",
+          "notes": "Kendo program selector inside the popup — must be set before checking print options."
         },
         {
           "step": 8,
@@ -596,7 +626,13 @@
           "screen": "transcript_report_popup",
           "action": "click",
           "element": "btn_print",
-          "notes": "btnPrint — opens the browser print dialog (Export to Print)"
+          "notes": "btnPrint — triggers a PDF download (not a browser dialog)"
+        },
+        {
+          "step": 11,
+          "screen": "transcript_report_popup",
+          "action": "close_page",
+          "notes": "Close the popup after the PDF downloads"
         }
       ]
     }
