@@ -652,12 +652,35 @@ async function runStep(step) {
   return result;
 }
 
+// ── Email → student ID resolver ───────────────────────────────────────────────
+
+async function resolveEmail(email) {
+  const searchUrl = 'https://app.asapconnected.com/Students.aspx?s=' + encodeURIComponent(email);
+  await chrome.tabs.update(state.activeTabId, { url: searchUrl });
+  await waitForTabLoad(state.activeTabId);
+
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: state.activeTabId },
+    func: () => {
+      const links = document.querySelectorAll('a[id*="rptStudents_ctrl"][id$="_btnView"]');
+      const out = [];
+      links.forEach(a => {
+        const m = (a.getAttribute('href') || '').match(/[?&]Id=(\d+)/i);
+        if (m) out.push(m[1]);
+      });
+      return out;
+    },
+  });
+
+  if (!result || result.length === 0) throw new Error('No student found with that email');
+  if (result.length > 1) throw new Error(`Multiple students matched (${result.length}) — use a student ID instead`);
+  return result[0];
+}
+
 // ── Run one student ───────────────────────────────────────────────────────────
 
 async function runStudent(template, studentId, vars, idx, total) {
-  const isEmail = studentId.includes('@');
-  const label = isEmail ? `email: ${studentId}` : `ID: ${studentId}`;
-  log(`Starting student ${idx + 1} of ${total} (${label})…`, 'accent');
+  log(`Starting student ${idx + 1} of ${total} (ID: ${studentId})…`, 'accent');
 
   const steps = substituteVars(template, vars);
 
@@ -729,18 +752,26 @@ async function runBatch(template, studentIds) {
     if (!sid) continue;
 
     const isEmail = sid.includes('@');
+    let resolvedId = sid;
+
     if (isEmail) {
-      log(`Skipping "${sid}" — email lookup is not yet supported for this process. Please use the student ID instead.`, 'warn');
-      state.failed++;
-      toPanel({ type: 'progress', current: i + 1, total, studentId: sid, status: 'failed' });
-      continue;
+      log(`Looking up student ID for ${sid}…`, 'info');
+      try {
+        resolvedId = await resolveEmail(sid);
+        log(`Found student ID: ${resolvedId}`, 'info');
+      } catch (e) {
+        log(`Could not find student for email "${sid}": ${e.message}`, 'err');
+        state.failed++;
+        toPanel({ type: 'progress', current: i + 1, total, studentId: sid, status: 'failed' });
+        continue;
+      }
     }
 
-    const vars = { studentid: sid, email: '' };
+    const vars = { studentid: resolvedId, email: isEmail ? sid : '' };
     state.activeTabId = state.mainTabId; // reset to main tab for each student
     state.popupTabId = null;
 
-    const outcome = await runStudent(template, sid, vars, i, total);
+    const outcome = await runStudent(template, resolvedId, vars, i, total);
 
     if (outcome === 'succeeded') {
       state.succeeded++;
