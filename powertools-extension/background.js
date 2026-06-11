@@ -730,26 +730,12 @@ async function executeStepInPage(step) {
         await new Promise(r => setTimeout(r, 100));
 
         if (capturedPdfUrl) {
-          try {
-            const pdfUrl = new URL(capturedPdfUrl, location.href).href;
-            const resp = await fetch(pdfUrl, { credentials: 'same-origin' });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const ct = (resp.headers.get('content-type') || '').toLowerCase();
-            if (!ct.includes('pdf') && !ct.includes('octet-stream')) {
-              const snippet = await resp.clone().text().then(t => t.slice(0, 300)).catch(() => '');
-              throw new Error(`Expected PDF, got ${ct.slice(0, 60)} | ${snippet}`);
-            }
-            const buf = await resp.arrayBuffer();
-            const u8 = new Uint8Array(buf);
-            let bin = '';
-            for (let i = 0; i < u8.length; i += 0x8000) {
-              bin += String.fromCharCode(...u8.subarray(i, Math.min(i + 0x8000, u8.length)));
-            }
-            return { ok: true, pdfBase64: btoa(bin) };
-          } catch (fetchErr) {
-            return { ok: false, err: 'PDF fetch failed: ' + fetchErr.message,
-                     diag: { capturedPdfUrl } };
-          }
+          // Return the PDF URL to the background — it will download it directly
+          // using chrome.downloads.download({ saveAs:false }) which uses the
+          // browser's cookie store (so the session is included) and bypasses
+          // Chrome's "Ask where to save" setting entirely.
+          const pdfUrl = new URL(capturedPdfUrl, location.href).href;
+          return { ok: true, pdfUrl };
         }
 
         // window.open was NOT called — fall through to normal download handling.
@@ -1193,23 +1179,21 @@ async function runStep(step) {
     log('Report ready — saving PDF…', 'muted');
   }
 
-  // pdfBase64 path: executeStepInPage fetched the PDF directly via fetch().
-  // No Chrome download pipeline was involved — just save it via a data URL.
-  if (result.pdfBase64) {
+  // pdfUrl path: executeStepInPage captured the window.open URL.
+  // Download it via chrome.downloads.download({ saveAs:false }) — the browser's
+  // cookie store includes the session, so authentication works, and saveAs:false
+  // bypasses Chrome's "Ask where to save" setting without any data URI hacks.
+  if (result.pdfUrl) {
     if (downloadPromise) downloadPromise.abort?.();
     const name = state.pendingDownloadName || 'transcript.pdf';
     state.pendingDownloadName = null;
     const filename = safeDownloadPath(_cachedSubfolder, name);
     log('Saving transcript…', 'muted');
-    const dataUrl = `data:application/pdf;base64,${result.pdfBase64}`;
-    // Set retryDownloadName so onDeterminingFilename calls suggest() with the
-    // correct path. chrome.downloads.download's own filename param is ignored
-    // when an onDeterminingFilename listener is registered but doesn't suggest.
     state.retryDownloadName = filename;
     try {
       const dlItem = await new Promise((resolve, reject) => {
         chrome.downloads.download(
-          { url: dataUrl, saveAs: false, conflictAction: 'uniquify' },
+          { url: result.pdfUrl, saveAs: false, conflictAction: 'uniquify' },
           (id) => {
             if (chrome.runtime.lastError || id == null) {
               state.retryDownloadName = null;
