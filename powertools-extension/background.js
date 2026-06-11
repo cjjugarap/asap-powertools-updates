@@ -420,6 +420,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── Sidepanel download callbacks ──
+  if (msg.type === 'sidepanel_download_done') {
+    if (_sidepanelDownloadResolve) {
+      clearTimeout(_sidepanelDownloadTimer);
+      const resolve = _sidepanelDownloadResolve;
+      _sidepanelDownloadResolve = null;
+      _sidepanelDownloadReject  = null;
+      _sidepanelDownloadTimer   = null;
+      resolve({ filename: msg.filename, dlId: msg.dlId });
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === 'sidepanel_download_error') {
+    if (_sidepanelDownloadReject) {
+      clearTimeout(_sidepanelDownloadTimer);
+      const reject = _sidepanelDownloadReject;
+      _sidepanelDownloadResolve = null;
+      _sidepanelDownloadReject  = null;
+      _sidepanelDownloadTimer   = null;
+      reject(new Error(msg.err || 'Sidepanel download failed'));
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
   // ── Debug log ──
   if (msg.type === 'get_debug_log') {
     sendResponse({ log: getDebugLog() });
@@ -728,16 +755,24 @@ async function executeStepInPage(step) {
         await new Promise(r => setTimeout(r, 100));
 
         if (capturedPdfUrl) {
-          // Return the PDF URL to the background — it will download it directly
-          // using chrome.downloads.download({ saveAs:false }) which uses the
-          // browser's cookie store (so the session is included) and bypasses
-          // Chrome's "Ask where to save" setting entirely.
           const pdfUrl = new URL(capturedPdfUrl, location.href).href;
-          return { ok: true, pdfUrl };
+          try {
+            const resp = await fetch(pdfUrl, { credentials: 'same-origin' });
+            if (!resp.ok) return { ok: false, err: `PDF fetch failed (HTTP ${resp.status})` };
+            const buffer = await resp.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            // btoa via chunked fromCharCode — avoids call-stack limit for large files
+            let b64str = '';
+            const chunk = 32768;
+            for (let i = 0; i < bytes.length; i += chunk) {
+              b64str += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+            }
+            return { ok: true, pdfBase64: btoa(b64str) };
+          } catch (e) {
+            return { ok: false, err: 'PDF fetch failed: ' + e.message };
+          }
         }
-
-        // window.open was NOT called — fall through to normal download handling.
-        return { ok: true, postbackReason: 'no-postback', waitForNav: false };
+        return { ok: false, err: 'Print button did not open a PDF URL' };
       }
 
       // Intercept window.open — injected clicks aren't trusted gestures so
@@ -1016,6 +1051,43 @@ function retryDownloadSilent(url, filename) {
   });
 }
 
+// ── Sidepanel blob download ───────────────────────────────────────────────────
+// The sidepanel (an extension page) creates a blob URL and calls
+// chrome.downloads.download — this fires onDeterminingFilename, allowing
+// suggest() to set the subfolder path without any Save As dialog appearing.
+// (data: URLs and background-initiated network downloads do NOT reliably fire
+// onDeterminingFilename; blob URLs from extension pages always do.)
+
+let _sidepanelDownloadResolve = null;
+let _sidepanelDownloadReject  = null;
+let _sidepanelDownloadTimer   = null;
+
+function downloadViaSidepanel(pdfBase64, name) {
+  return new Promise((resolve, reject) => {
+    if (_sidepanelDownloadTimer) clearTimeout(_sidepanelDownloadTimer);
+    _sidepanelDownloadResolve = resolve;
+    _sidepanelDownloadReject  = reject;
+    _sidepanelDownloadTimer   = setTimeout(() => {
+      _sidepanelDownloadResolve = null;
+      _sidepanelDownloadReject  = null;
+      _sidepanelDownloadTimer   = null;
+      reject(new Error('Sidepanel download timed out after 2 minutes'));
+    }, 120000);
+    chrome.runtime.sendMessage({
+      _source: 'background',
+      type: 'download_pdf_blob',
+      pdfBase64,
+      filename: name,
+    }).catch((e) => {
+      clearTimeout(_sidepanelDownloadTimer);
+      _sidepanelDownloadResolve = null;
+      _sidepanelDownloadReject  = null;
+      _sidepanelDownloadTimer   = null;
+      reject(new Error('Sidepanel not reachable: ' + (e?.message || 'unknown')));
+    });
+  });
+}
+
 // ── DOM-settle helper ─────────────────────────────────────────────────────────
 // Mirrors navigator.py's _wait_for_change: polls the page DOM fingerprint
 // every 200ms and resolves once it's been stable for `stableMs`, or after
@@ -1177,34 +1249,25 @@ async function runStep(step) {
     log('Report ready — saving PDF…', 'muted');
   }
 
-  // pdfUrl path: executeStepInPage captured the window.open URL.
-  // Download it via chrome.downloads.download({ saveAs:false }) — the browser's
-  // cookie store includes the session, so authentication works, and saveAs:false
-  // bypasses Chrome's "Ask where to save" setting without any data URI hacks.
-  if (result.pdfUrl) {
+  // pdfBase64 path: page fetched the PDF bytes and returned them as base64.
+  // Forward to the sidepanel which creates a blob URL and calls
+  // chrome.downloads.download — blob URLs from extension pages fire
+  // onDeterminingFilename, so suggest() sets the subfolder path with no dialog.
+  if (result.pdfBase64) {
     if (downloadPromise) downloadPromise.abort?.();
     const name = state.pendingDownloadName || 'transcript.pdf';
     state.pendingDownloadName = null;
     const filename = safeDownloadPath(_cachedSubfolder, name);
     log('Saving transcript…', 'muted');
+    // Pre-set so onDeterminingFilename suggests the correct subfolder path.
     state.retryDownloadName = filename;
     try {
-      const dlItem = await new Promise((resolve, reject) => {
-        chrome.downloads.download(
-          { url: result.pdfUrl, saveAs: false, conflictAction: 'uniquify' },
-          (id) => {
-            if (chrome.runtime.lastError || id == null) {
-              state.retryDownloadName = null;
-              reject(new Error(chrome.runtime.lastError?.message || 'download() failed'));
-              return;
-            }
-            state.lastDownloadId = id;
-            waitForDownloadComplete(id, 120000).then(resolve).catch(reject);
-          }
-        );
-      });
-      result.downloadedFile = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : name;
+      const dlResult = await downloadViaSidepanel(result.pdfBase64, name);
+      state.lastDownloadId = dlResult.dlId || null;
+      state.retryDownloadName = null;
+      result.downloadedFile = dlResult.filename || name;
     } catch (e) {
+      state.retryDownloadName = null;
       return { ok: false, err: 'PDF save failed: ' + e.message };
     }
     return result;
