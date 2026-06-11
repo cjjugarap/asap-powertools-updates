@@ -342,7 +342,7 @@ function waitForTabLoad(tabId, timeoutMs = 15000) {
         clearTimeout(timer);
         chrome.tabs.onUpdated.removeListener(listener);
         // Small extra delay for JS frameworks to settle (ASP.NET postbacks).
-        setTimeout(resolve, 600);
+        setTimeout(resolve, 200);
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
@@ -472,6 +472,11 @@ function executeStepInPage(step) {
     if (t === 'click') {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
+      // If this is a link with an href, return it so the background can open
+      // it directly — injected clicks can't trigger window.open (not trusted).
+      if (el.tagName === 'A' && el.href && !el.href.startsWith('javascript')) {
+        return { ok: true, waitForNav: false, openHref: el.href };
+      }
       el.click();
       return { ok: true, waitForNav: true };
     }
@@ -588,15 +593,8 @@ async function runStep(step) {
     return { ok: true };
   }
 
-  // For click steps, watch for a potential popup tab opening.
-  let popupPromise = null;
-  if (t === 'click') {
-    popupPromise = waitForNewTab(3000);
-  }
-
   // For the step just before a download (btnPrint), start watching for downloads.
   let downloadPromise = null;
-  // We'll start a download watcher if this click targets btnPrint.
   const locId = (step.locators || {}).id || '';
   const locSuffix = (step.locators || {}).id_suffix || '';
   const isBtnPrint = locId === 'btnPrint' || locSuffix === 'btnPrint';
@@ -619,22 +617,29 @@ async function runStep(step) {
 
   if (!result.ok) return result;
 
+  // Link clicks: background opens the href directly to bypass popup blocker.
+  if (result.openHref) {
+    const url = result.openHref;
+    // Detect popup-style links (transcript report opens in a new window).
+    const isPopup = url.includes('CustomerTranscript') || url.includes('Report');
+    if (isPopup) {
+      const newTab = await chrome.tabs.create({ url, active: false });
+      state.popupTabId = newTab.id;
+      state.activeTabId = newTab.id;
+      await waitForTabLoad(newTab.id, 15000);
+    } else {
+      await chrome.tabs.update(tabId, { url });
+      await waitForTabLoad(tabId, 10000);
+    }
+    return result;
+  }
+
   // If a postback/navigation was triggered, wait for the page to settle.
   if (result.waitForNav) {
     try {
       await waitForTabLoad(tabId, 10000);
     } catch (_) {
       // Tab may not have navigated at all — that's fine.
-    }
-  }
-
-  // Check if a popup tab opened (e.g. transcript report popup).
-  if (popupPromise) {
-    const newTabId = await popupPromise;
-    if (newTabId) {
-      state.popupTabId = newTabId;
-      state.activeTabId = newTabId;
-      await waitForTabLoad(newTabId, 15000);
     }
   }
 
