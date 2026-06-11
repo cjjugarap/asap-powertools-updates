@@ -137,9 +137,10 @@ let state = {
   failed: 0,
   skipped: 0,
   pendingDownloadName: null,
-  pendingDownloadUrl: null,       // captured in onDeterminingFilename for retry
-  lastSuggestedFilename: null,    // the sanitized path, reused for retry
-  retryDownloadName: null,        // consumed by onDeterminingFilename for the retry download
+  pendingDownloadUrl: null,
+  lastSuggestedFilename: null,
+  retryDownloadName: null,
+  primaryDownloadId: null,      // ID of the page-triggered download being canceled
   currentStudentId: null,
   currentStudentName: null,
   lastDownloadId: null,
@@ -159,6 +160,7 @@ function resetState() {
     pendingDownloadUrl: null,
     lastSuggestedFilename: null,
     retryDownloadName: null,
+    primaryDownloadId: null,
     currentStudentId: null,
     currentStudentName: null,
     lastDownloadId: null,
@@ -200,36 +202,44 @@ function safeDownloadPath(subfolder, filename) {
   return [...parts, file].join('/');
 }
 
+// ── Download interception ─────────────────────────────────────────────────────
+// onCreated fires BEFORE onDeterminingFilename (and thus before Chrome shows
+// any dialog). We cancel the page-triggered download here — at this point
+// Chrome hasn't reached the "Ask where to save" check yet — then re-initiate
+// it ourselves with saveAs:false via the USER_CANCELED retry path.
+
+chrome.downloads.onCreated.addListener((item) => {
+  if (!state.pendingDownloadName) return;
+
+  const name = state.pendingDownloadName;
+  state.pendingDownloadName = null;
+  const url = item.url || null;
+
+  let filename = name;
+  try { filename = safeDownloadPath(_cachedSubfolder, name); } catch (_) {}
+
+  state.pendingDownloadUrl = url;
+  state.lastSuggestedFilename = filename;
+  state.retryDownloadName = filename; // consumed by onDeterminingFilename for retry
+  state.primaryDownloadId = item.id;
+
+  // Cancel before onDeterminingFilename runs → Chrome never shows any dialog.
+  chrome.downloads.cancel(item.id);
+});
+
+// onDeterminingFilename: for the primary download (being canceled above),
+// return true (async mode) so Chrome keeps waiting and never shows a dialog.
+// For the silent retry, call suggest() with the correct filename.
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-  // Retry download — provide the correct filename via suggest().
-  // saveAs:false in the chrome.downloads.download() call prevents the dialog.
+  if (item.id === state.primaryDownloadId) {
+    // Primary is already canceled. Stay in async mode so Chrome doesn't show
+    // a dialog while waiting — the cancel will abort this state.
+    return true;
+  }
   if (state.retryDownloadName) {
     const filename = state.retryDownloadName;
     state.retryDownloadName = null;
     suggest({ filename, conflictAction: 'uniquify' });
-    return;
-  }
-
-  // Primary (page-triggered) download.
-  // Capture the URL/filename, cancel this download immediately so Chrome
-  // never shows a Save As dialog, then let the USER_CANCELED path in
-  // runStep re-initiate it silently via chrome.downloads.download({ saveAs:false }).
-  if (state.pendingDownloadName) {
-    const name = state.pendingDownloadName;
-    state.pendingDownloadName = null;
-    state.pendingDownloadUrl = item.url || null;
-    let filename = name;
-    try {
-      filename = safeDownloadPath(_cachedSubfolder, name);
-    } catch (_) {}
-    state.lastSuggestedFilename = filename;
-    state.retryDownloadName = filename; // pre-loaded for the retry's onDeterminingFilename call
-
-    // suggest() must be called to release the download from the
-    // "determining filename" state; cancel() immediately after aborts it
-    // before Chrome writes any bytes or shows a dialog.
-    suggest({ filename, conflictAction: 'uniquify' });
-    chrome.downloads.cancel(item.id);
   }
 });
 
