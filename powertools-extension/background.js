@@ -720,13 +720,20 @@ async function executeStepInPage(step) {
         if (form) {
           try {
             const fd = new FormData(form);
-            // Include the button's own name/value (FormData skips submit buttons).
-            if (el.name) fd.set(el.name, el.value || 'Print');
-            // ASP.NET WebForms uses __EVENTTARGET / __EVENTARGUMENT for postbacks.
-            const evtField = form.elements['__EVENTTARGET'];
-            if (evtField) evtField.value = el.name || el.id || '';
-            const argField = form.elements['__EVENTARGUMENT'];
-            if (argField) argField.value = '';
+            // Detect how the button triggers the postback:
+            //   A) __doPostBack style: onclick="javascript:__doPostBack('ctl00$...$btnPrint','')"
+            //      → set __EVENTTARGET to the UniqueID extracted from onclick
+            //   B) Regular submit button: include button's name/value pair
+            const onclick = (el.getAttribute('onclick') || '').trim();
+            const doPostBackMatch = onclick.match(/__doPostBack\s*\(\s*['"]([^'"]+)['"]/);
+            if (doPostBackMatch) {
+              fd.set('__EVENTTARGET', doPostBackMatch[1]);
+              fd.set('__EVENTARGUMENT', '');
+            } else {
+              if (el.name) fd.set(el.name, el.value || 'Print');
+              fd.set('__EVENTTARGET', '');
+              fd.set('__EVENTARGUMENT', '');
+            }
             // Build URL-encoded body (fetch with FormData sends multipart which
             // ASP.NET classic WebForms does not always parse correctly).
             const params = new URLSearchParams();
@@ -743,7 +750,9 @@ async function executeStepInPage(step) {
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const ct = (resp.headers.get('content-type') || '').toLowerCase();
             if (!ct.includes('pdf') && !ct.includes('octet-stream')) {
-              throw new Error(`Unexpected content-type: ${ct.slice(0, 80)}`);
+              // Return enough of the response body for diagnosis.
+              const snippet = await resp.clone().text().then(t => t.slice(0, 300)).catch(() => '');
+              throw new Error(`Unexpected content-type: ${ct.slice(0, 80)} | body: ${snippet}`);
             }
             const buf = await resp.arrayBuffer();
             const u8 = new Uint8Array(buf);
@@ -754,7 +763,9 @@ async function executeStepInPage(step) {
             }
             return { ok: true, pdfBase64: btoa(bin) };
           } catch (fetchErr) {
-            return { ok: false, err: 'PDF fetch failed: ' + fetchErr.message };
+            const onclick = (el.getAttribute('onclick') || '').slice(0, 120);
+            return { ok: false, err: 'PDF fetch failed: ' + fetchErr.message,
+                     diag: { onclick, elName: el.name, elId: el.id } };
           }
         }
       }
