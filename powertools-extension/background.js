@@ -562,22 +562,28 @@ function waitForNewTab(timeoutMs = 5000) {
 }
 
 function waitForDownload(timeoutMs = 45000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+  let onCreated;
+  let timer;
+  const promise = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
       chrome.downloads.onCreated.removeListener(onCreated);
       reject(new Error('Download did not start within 45 seconds'));
     }, timeoutMs);
 
-    function onCreated(item) {
+    onCreated = function(item) {
       clearTimeout(timer);
       chrome.downloads.onCreated.removeListener(onCreated);
-      // onDeterminingFilename already redirected the file to our subfolder.
-      // Just wait for this download to complete.
       state.lastDownloadId = item.id;
       waitForDownloadComplete(item.id, 120000).then(resolve).catch(reject);
-    }
+    };
     chrome.downloads.onCreated.addListener(onCreated);
   });
+  // Allow caller to cancel the listener (e.g. when pdfBase64 path is taken).
+  promise.abort = () => {
+    clearTimeout(timer);
+    if (onCreated) chrome.downloads.onCreated.removeListener(onCreated);
+  };
+  return promise;
 }
 
 function waitForDownloadComplete(downloadId, timeoutMs = 120000) {
@@ -704,6 +710,55 @@ async function executeStepInPage(step) {
     if (t === 'click') {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
+
+      // btnPrint: intercept the form POST from the page context (same-origin,
+      // so session cookies are included automatically). This bypasses Chrome's
+      // entire download pipeline — no onCreated, no dialog, no Save As prompt.
+      const isPrint = loc.id === 'btnPrint' || (loc.id_suffix || '') === 'btnPrint';
+      if (isPrint) {
+        const form = el.closest('form') || document.forms[0];
+        if (form) {
+          try {
+            const fd = new FormData(form);
+            // Include the button's own name/value (FormData skips submit buttons).
+            if (el.name) fd.set(el.name, el.value || 'Print');
+            // ASP.NET WebForms uses __EVENTTARGET / __EVENTARGUMENT for postbacks.
+            const evtField = form.elements['__EVENTTARGET'];
+            if (evtField) evtField.value = el.name || el.id || '';
+            const argField = form.elements['__EVENTARGUMENT'];
+            if (argField) argField.value = '';
+            // Build URL-encoded body (fetch with FormData sends multipart which
+            // ASP.NET classic WebForms does not always parse correctly).
+            const params = new URLSearchParams();
+            for (const [k, v] of fd.entries()) {
+              if (typeof v === 'string') params.append(k, v);
+            }
+            const postUrl = new URL(form.action || location.href, location.href).href;
+            const resp = await fetch(postUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: params.toString(),
+              credentials: 'same-origin',
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const ct = (resp.headers.get('content-type') || '').toLowerCase();
+            if (!ct.includes('pdf') && !ct.includes('octet-stream')) {
+              throw new Error(`Unexpected content-type: ${ct.slice(0, 80)}`);
+            }
+            const buf = await resp.arrayBuffer();
+            const u8 = new Uint8Array(buf);
+            // Chunk-encode to avoid call-stack overflow on large PDFs.
+            let bin = '';
+            for (let i = 0; i < u8.length; i += 0x8000) {
+              bin += String.fromCharCode(...u8.subarray(i, Math.min(i + 0x8000, u8.length)));
+            }
+            return { ok: true, pdfBase64: btoa(bin) };
+          } catch (fetchErr) {
+            return { ok: false, err: 'PDF fetch failed: ' + fetchErr.message };
+          }
+        }
+      }
+
       // Intercept window.open — injected clicks aren't trusted gestures so
       // window.open gets blocked. Capture the URL; background opens it instead.
       let capturedUrl = null;
@@ -1139,6 +1194,36 @@ async function runStep(step) {
     log('Waiting for report to finish rendering…', 'muted');
     await waitForDomSettle(state.activeTabId, 600, 25000);
     log('Report ready — saving PDF…', 'muted');
+  }
+
+  // pdfBase64 path: executeStepInPage fetched the PDF directly via fetch().
+  // No Chrome download pipeline was involved — just save it via a data URL.
+  if (result.pdfBase64) {
+    if (downloadPromise) downloadPromise.abort?.();
+    const name = state.pendingDownloadName || 'transcript.pdf';
+    state.pendingDownloadName = null;
+    const filename = safeDownloadPath(_cachedSubfolder, name);
+    log('Saving transcript…', 'muted');
+    const dataUrl = `data:application/pdf;base64,${result.pdfBase64}`;
+    try {
+      const dlItem = await new Promise((resolve, reject) => {
+        chrome.downloads.download(
+          { url: dataUrl, filename, saveAs: false, conflictAction: 'uniquify' },
+          (id) => {
+            if (chrome.runtime.lastError || id == null) {
+              reject(new Error(chrome.runtime.lastError?.message || 'download() failed'));
+              return;
+            }
+            state.lastDownloadId = id;
+            waitForDownloadComplete(id, 120000).then(resolve).catch(reject);
+          }
+        );
+      });
+      result.downloadedFile = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : name;
+    } catch (e) {
+      return { ok: false, err: 'PDF save failed: ' + e.message };
+    }
+    return result;
   }
 
   // Download handling (btnPrint triggers a download after its click).
