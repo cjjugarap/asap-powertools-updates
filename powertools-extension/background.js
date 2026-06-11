@@ -1202,12 +1202,17 @@ async function runStep(step) {
     const filename = safeDownloadPath(_cachedSubfolder, name);
     log('Saving transcript…', 'muted');
     const dataUrl = `data:application/pdf;base64,${result.pdfBase64}`;
+    // Set retryDownloadName so onDeterminingFilename calls suggest() with the
+    // correct path. chrome.downloads.download's own filename param is ignored
+    // when an onDeterminingFilename listener is registered but doesn't suggest.
+    state.retryDownloadName = filename;
     try {
       const dlItem = await new Promise((resolve, reject) => {
         chrome.downloads.download(
-          { url: dataUrl, filename, saveAs: false, conflictAction: 'uniquify' },
+          { url: dataUrl, saveAs: false, conflictAction: 'uniquify' },
           (id) => {
             if (chrome.runtime.lastError || id == null) {
+              state.retryDownloadName = null;
               reject(new Error(chrome.runtime.lastError?.message || 'download() failed'));
               return;
             }
