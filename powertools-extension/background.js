@@ -593,25 +593,38 @@ async function executeStepInPage(step) {
 
     // ── select_kendo ─────────────────────────────────────────────
     if (t === 'select_kendo') {
-      // jQuery and Kendo widgets may finish initializing after the tab reports
-      // 'complete'. Poll until they're ready (up to 8 seconds).
-      const deadline = Date.now() + 8000;
+      // Poll for jQuery + Kendo widget — they may load after tab reports 'complete'.
+      const deadline = Date.now() + 5000;
       let el, jq, widget;
       while (Date.now() < deadline) {
-        el  = findEl(loc, null, null, 0);
-        jq  = window.jQuery || window.$;
-        if (el && jq) {
-          widget = jq(el).data('kendoDropDownList') || jq(el).data('kendoComboBox');
-          if (widget) break;
-        }
+        el     = findEl(loc, null, null, 0);
+        jq     = window.jQuery || window.$;
+        widget = el && jq && (jq(el).data('kendoDropDownList') || jq(el).data('kendoComboBox'));
+        if (widget) break;
         await new Promise(r => setTimeout(r, 150));
       }
-      if (!el)     return { ok: false, err: 'Kendo element not found after 8s' };
-      if (!jq)     return { ok: false, err: 'jQuery not available after 8s' };
-      if (!widget) return { ok: false, err: 'Kendo widget not initialized after 8s' };
-      widget.value(step.value);
-      widget.trigger('change');
-      return { ok: true, waitForNav: false };
+
+      if (widget) {
+        // Kendo widget found — use its API.
+        widget.value(step.value);
+        widget.trigger('change');
+        return { ok: true };
+      }
+
+      // Kendo not available — fall back to treating it as a plain <select>.
+      if (!el) el = findEl(loc, 'combobox', null, 0);
+      if (!el || el.tagName !== 'SELECT') {
+        return { ok: false, err: 'Kendo widget not found and no plain <select> fallback' };
+      }
+      for (const opt of el.options) {
+        if (opt.value === step.value || opt.text.trim() === step.value ||
+            opt.text.trim() === step.label) {
+          el.value = opt.value;
+          dispatch(el, ['change', 'input']);
+          return { ok: true, waitForNav: true };
+        }
+      }
+      return { ok: false, err: `Option "${step.value || step.label}" not found` };
     }
 
     // ── check (checkbox) ─────────────────────────────────────────
