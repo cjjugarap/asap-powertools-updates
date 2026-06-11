@@ -729,9 +729,14 @@ async function runBatch(template, studentIds) {
     if (!sid) continue;
 
     const isEmail = sid.includes('@');
-    const vars = isEmail
-      ? { studentid: sid, email: sid }
-      : { studentid: sid, email: '' };
+    if (isEmail) {
+      log(`Skipping "${sid}" — email lookup is not yet supported for this process. Please use the student ID instead.`, 'warn');
+      state.failed++;
+      toPanel({ type: 'progress', current: i + 1, total, studentId: sid, status: 'failed' });
+      continue;
+    }
+
+    const vars = { studentid: sid, email: '' };
     state.activeTabId = state.mainTabId; // reset to main tab for each student
     state.popupTabId = null;
 
