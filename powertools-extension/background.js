@@ -176,14 +176,34 @@ async function getDownloadSubfolder() {
 
 // ── Download filename interception ────────────────────────────────────────────
 // onDeterminingFilename fires before Chrome writes the file or shows any dialog.
-// Calling suggest() here redirects the file to our subfolder with our custom name,
-// without cancelling or re-downloading (the original download continues uninterrupted).
+// Calling suggest() redirects the file to our subfolder with our custom name.
+
+// Chrome's download filename rules (cross-platform safe):
+//   - forward slashes only as separators
+//   - no leading slash, no ".." components
+//   - no Windows-illegal chars: < > : " \ | ? *  (/ is a separator, not a char)
+function safeDownloadPath(subfolder, filename) {
+  const cleanSeg = s => s
+    .replace(/[<>:"|?*\x00-\x1f\\]+/g, '_')  // illegal chars
+    .replace(/\.{2,}/g, '.')                   // no ".."
+    .replace(/^[./\s]+|[./\s]+$/g, '')         // no leading/trailing dots or slashes
+    .slice(0, 120) || 'download';
+
+  const parts = subfolder.split('/').map(cleanSeg).filter(Boolean);
+  const file  = cleanSeg(filename.replace(/\//g, '_'));
+  return [...parts, file].join('/');
+}
 
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   if (state.pendingDownloadName) {
     const name = state.pendingDownloadName;
     state.pendingDownloadName = null;
-    suggest({ filename: _cachedSubfolder + '/' + name, conflictAction: 'uniquify' });
+    try {
+      const filename = safeDownloadPath(_cachedSubfolder, name);
+      suggest({ filename, conflictAction: 'uniquify' });
+    } catch (_) {
+      suggest(); // fall back to Chrome's default if anything goes wrong
+    }
   }
 });
 
