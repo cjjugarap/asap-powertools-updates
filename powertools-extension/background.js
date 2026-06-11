@@ -136,6 +136,9 @@ let state = {
   succeeded: 0,
   failed: 0,
   skipped: 0,
+  pendingDownloadName: null, // set before btnPrint click; consumed by onDeterminingFilename
+  currentStudentId: null,
+  currentStudentName: null,
 };
 
 function resetState() {
@@ -148,8 +151,23 @@ function resetState() {
     succeeded: 0,
     failed: 0,
     skipped: 0,
+    pendingDownloadName: null,
+    currentStudentId: null,
+    currentStudentName: null,
   };
 }
+
+// ── Download filename interception ────────────────────────────────────────────
+
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  if (state.pendingDownloadName) {
+    const name = state.pendingDownloadName;
+    state.pendingDownloadName = null;
+    suggest({ filename: name, conflictAction: 'uniquify' });
+  } else {
+    suggest();
+  }
+});
 
 // ── Debug log ─────────────────────────────────────────────────────────────────
 
@@ -627,13 +645,18 @@ async function executeStepInPage(step) {
         return null;
       }
 
-      // Poll up to 10s — jQuery may load well after tab 'complete' on popup pages.
-      const deadline = Date.now() + 10000;
+      // Poll up to 5s for jQuery+Kendo widget. Exit early if we detect the
+      // DOM-only Kendo pattern (listbox present but no JS API) — no need to
+      // wait the full timeout just to discover jQuery never loads.
+      const deadline = Date.now() + 5000;
       let input, widget;
       while (Date.now() < deadline) {
         input  = findKendoInput();
         widget = getWidget(input);
         if (widget) break;
+        // DOM-only Kendo: listbox already rendered, JS API won't arrive.
+        const listboxId = `${exactId || idSuffix}_listbox`;
+        if (input && document.getElementById(listboxId)) break;
         await new Promise(r => setTimeout(r, 200));
       }
 
@@ -762,6 +785,37 @@ async function executeStepInPage(step) {
   } catch (e) {
     return { ok: false, err: e.message };
   }
+}
+
+// ── Student name reader ───────────────────────────────────────────────────────
+
+async function readStudentName(tabId) {
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const tryText = sel => {
+          const el = document.querySelector(sel);
+          return el ? (el.textContent || '').trim() : '';
+        };
+        const n = tryText('#ContentPlaceHolder1_txtStudentName')
+               || tryText('[id$="txtStudentName"]')
+               || tryText('[id$="lblStudentName"]')
+               || tryText('[id$="lblName"]');
+        return (n || '').replace(/\s+/g, ' ').trim();
+      },
+    });
+    return result || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function sanitizeFilename(s) {
+  return s.replace(/[<>:"/\\|?*\x00-\x1f]+/g, '_')
+          .replace(/\s+/g, '_')
+          .replace(/^[._]+|[._]+$/g, '')
+          .slice(0, 120) || 'download';
 }
 
 // ── Run one step ──────────────────────────────────────────────────────────────
@@ -898,11 +952,21 @@ async function runStudent(template, studentId, vars, idx, total) {
   log(`Starting student ${idx + 1} of ${total} (ID: ${studentId})…`, 'accent');
   debugPush({ event: 'student_start', studentIndex: idx, total });
 
+  state.currentStudentId = studentId;
+  state.currentStudentName = null;
+  state.pendingDownloadName = null;
+
   const steps = substituteVars(template, vars);
 
   for (let i = 0; i < steps.length; i++) {
     if (state.stopRequested) return 'stopped';
     const step = steps[i];
+
+    // After landing on a StudentDetail page, read the name and prepare
+    // the download filename: LastName_FirstName_ID_transcript.pdf
+    if (step.type === 'navigate' && (step.url || '').includes('StudentDetail')) {
+      // Name read happens AFTER the navigate completes — handled below.
+    }
 
     log(stepToEnglish(step));
     const t0 = Date.now();
@@ -939,6 +1003,20 @@ async function runStudent(template, studentId, vars, idx, total) {
         debugPush({ event: 'student_fail', stepIndex: i });
         return 'failed';
       }
+
+      // After StudentDetail navigation lands, read the student name.
+      if (step.type === 'navigate' && (step.url || '').includes('StudentDetail')
+          && !state.currentStudentName) {
+        const name = await readStudentName(state.activeTabId);
+        if (name) {
+          state.currentStudentName = name;
+          debugPush({ event: 'student_name', name: '[REDACTED]' });
+        }
+        // Set the download filename now so it's ready when btnPrint fires.
+        const namePart = name ? sanitizeFilename(name) + '_' : '';
+        state.pendingDownloadName = `${namePart}${studentId}_transcript.pdf`;
+      }
+
       if (step.type === 'swap_dates') {
         if (result.swapped) {
           log('Dates were in the wrong order — fixed automatically.', 'warn');
