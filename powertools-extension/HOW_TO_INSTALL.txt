@@ -1,0 +1,31 @@
+ASAP Powertools — Chrome Extension
+====================================
+
+INSTALL (one time per computer):
+
+1. Open Chrome and go to:  chrome://extensions
+2. Turn on "Developer mode" (toggle in the top-right corner)
+3. Click "Load unpacked"
+4. Select the folder that contains this file  (the powertools-extension folder)
+5. The ASAP Powertools icon will appear in your Chrome toolbar
+
+USE:
+
+1. Click the ASAP Powertools icon in the toolbar
+   → A panel opens on the right side of the browser
+2. Click a process (e.g. "Print HSD Transcript")
+3. Click "Run for one student" and enter a student ID, OR
+   Click "Run for everyone" and paste a list of student IDs (one per line)
+4. The automation runs in the browser — watch the activity feed for progress
+5. Transcripts download to your normal Downloads folder
+
+UPDATES:
+
+When a new version is shared:
+1. Replace the powertools-extension folder with the new one
+2. Go to chrome://extensions and click the refresh icon on the ASAP Powertools card
+
+NOTES:
+- You must be logged in to ASAP Connected before running
+- The automation opens a tab and navigates automatically — don't click around while it runs
+- Student IDs are never sent anywhere outside of ASAP — all automation runs locally in your browser

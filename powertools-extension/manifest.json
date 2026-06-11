@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "ASAP Powertools",
+  "version": "2.0",
+  "description": "Run ASAP Connected workflows automatically. No PII captured.",
+  "permissions": [
+    "scripting",
+    "activeTab",
+    "tabs",
+    "downloads",
+    "sidePanel",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://app.asapconnected.com/*",
+    "https://admin.asapconnected.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_icon": {
+      "16":  "icon16.png",
+      "48":  "icon48.png",
+      "128": "icon128.png"
+    },
+    "default_title": "Open ASAP Powertools"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["templates/*.json"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

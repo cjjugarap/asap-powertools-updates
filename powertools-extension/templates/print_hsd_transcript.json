@@ -1,0 +1,152 @@
+{
+  "meta": {
+    "name": "Print HSD Transcript",
+    "process": "print_hsd_transcript",
+    "description": "Navigate to a student, select High School Diploma program, correct diploma/graduation dates if swapped, save, then open the transcript popup, select HSD in the popup, set print options, filter, and download the PDF.",
+    "variable": "studentid"
+  },
+  "steps": [
+    {
+      "type": "navigate",
+      "url": "https://admin.asapconnected.com/home"
+    },
+    {
+      "type": "click",
+      "role": "link",
+      "name": "Return to ASAP Classic",
+      "nth": 1,
+      "locators": {
+        "id": "appReturnBtn"
+      }
+    },
+    {
+      "type": "navigate",
+      "url": "https://app.asapconnected.com/StudentDetail.aspx?Id={{studentid}}"
+    },
+    {
+      "type": "click",
+      "role": "link",
+      "name": "Credits",
+      "nth": 0,
+      "locators": {}
+    },
+    {
+      "type": "click",
+      "role": "combobox",
+      "name": "",
+      "nth": 4,
+      "locators": {
+        "id": "ContentPlaceHolder1_ddlPrograms",
+        "id_suffix": "ddlPrograms",
+        "name_attr": "ctl00$ContentPlaceHolder1$ddlPrograms",
+        "name_suffix": "ddlPrograms"
+      }
+    },
+    {
+      "type": "select_option",
+      "role": "combobox",
+      "name": "",
+      "nth": 4,
+      "locators": {
+        "id": "ContentPlaceHolder1_ddlPrograms",
+        "id_suffix": "ddlPrograms",
+        "name_attr": "ctl00$ContentPlaceHolder1$ddlPrograms",
+        "name_suffix": "ddlPrograms"
+      },
+      "value": "2356",
+      "label": "High School Diploma"
+    },
+    {
+      "type": "swap_dates",
+      "diploma_suffix": "txtDiplomaDate",
+      "graduation_suffix": "txtGraduationDate"
+    },
+    {
+      "type": "click",
+      "role": "button",
+      "name": "",
+      "nth": 10,
+      "locators": {
+        "id": "ContentPlaceHolder1_btnsavecreditprogramdetails",
+        "id_suffix": "btnsavecreditprogramdetails"
+      }
+    },
+    {
+      "type": "click",
+      "role": "link",
+      "name": "Transcripts",
+      "nth": 0,
+      "locators": {}
+    },
+    {
+      "type": "click",
+      "role": "link",
+      "name": "View Transcript Report",
+      "nth": 0,
+      "locators": {
+        "id": "ContentPlaceHolder1_aTranscriptReport",
+        "id_suffix": "aTranscriptReport"
+      }
+    },
+    {
+      "type": "select_kendo",
+      "locators": {
+        "id": "cmbProgram",
+        "id_suffix": "cmbProgram"
+      },
+      "value": "High School Diploma"
+    },
+    {
+      "type": "check",
+      "role": "checkbox",
+      "name": "Landscape",
+      "nth": 0,
+      "locators": {
+        "id": "LandscapeTranscript"
+      }
+    },
+    {
+      "type": "check",
+      "role": "checkbox",
+      "name": "Display Diploma Date",
+      "nth": 0,
+      "locators": {
+        "id": "DisplayDiplomaDate"
+      }
+    },
+    {
+      "type": "check",
+      "role": "checkbox",
+      "name": "Display Graduation Date",
+      "nth": 0,
+      "locators": {
+        "id": "DisplayGraduationDate"
+      }
+    },
+    {
+      "type": "click",
+      "role": "button",
+      "name": "",
+      "nth": 0,
+      "locators": {
+        "id": "btnFilter"
+      }
+    },
+    {
+      "type": "click",
+      "role": "button",
+      "name": "",
+      "nth": 1,
+      "locators": {
+        "id": "btnPrint"
+      }
+    },
+    {
+      "type": "download",
+      "filename": "Transcript.pdf"
+    },
+    {
+      "type": "close_page"
+    }
+  ]
+}
