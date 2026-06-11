@@ -130,9 +130,9 @@ async function getSavedProcesses() {
 let state = {
   running: false,
   stopRequested: false,
-  mainTabId: null,   // the ASAP student detail tab
-  popupTabId: null,  // transcript popup tab (if open)
-  activeTabId: null, // whichever tab we're currently acting on
+  mainTabId: null,
+  popupTabId: null,
+  activeTabId: null,
   succeeded: 0,
   failed: 0,
   skipped: 0,
@@ -148,6 +148,48 @@ function resetState() {
     succeeded: 0,
     failed: 0,
     skipped: 0,
+  };
+}
+
+// ── Debug log ─────────────────────────────────────────────────────────────────
+
+let debugLog = [];
+let _debugSensitive = []; // runtime list of values to scrub before export
+
+function debugClear() {
+  debugLog = [];
+  _debugSensitive = [];
+}
+
+function debugRedact(text) {
+  if (typeof text !== 'string') text = JSON.stringify(text);
+  // Scrub known sensitive runtime values (student IDs, emails).
+  for (const val of _debugSensitive) {
+    if (val) text = text.replaceAll(val, '[REDACTED]');
+  }
+  // Scrub URL query params that carry IDs or search terms.
+  text = text.replace(/([?&](?:Id|s)=)[^&\s"']*/gi, '$1[REDACTED]');
+  // Scrub any remaining email-shaped or digit-run patterns in URLs.
+  text = text.replace(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, '[EMAIL]');
+  return text;
+}
+
+function debugPush(entry) {
+  debugLog.push({ t: Date.now(), ...entry });
+}
+
+function getDebugLog() {
+  const redacted = debugLog.map(e => {
+    const out = { ...e };
+    if (out.err)  out.err  = debugRedact(out.err);
+    if (out.url)  out.url  = debugRedact(out.url);
+    if (out.note) out.note = debugRedact(out.note);
+    return out;
+  });
+  return {
+    version: chrome.runtime.getManifest().version,
+    exported: new Date().toISOString(),
+    entries: redacted,
   };
 }
 
@@ -247,6 +289,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     deleteProcess(msg.id)
       .then(() => sendResponse({ ok: true }))
       .catch(err => sendResponse({ ok: false, err: err.message }));
+    return true;
+  }
+
+  // ── Debug log ──
+  if (msg.type === 'get_debug_log') {
+    sendResponse({ log: getDebugLog() });
     return true;
   }
 
@@ -546,7 +594,8 @@ function executeStepInPage(step) {
       if (isNaN(d1) || isNaN(d2) || !diplEl.value || !gradEl.value) {
         return { ok: true, swapped: false, note: 'One or both dates are empty' };
       }
-      // Swap if diploma date is before graduation date (they were entered backwards).
+      // Diploma date must be later than (or equal to) graduation date.
+      // If diploma < graduation, the dates were entered backwards — swap them.
       if (d1 < d2) {
         const tmp = diplEl.value;
         diplEl.value = gradEl.value;
@@ -686,6 +735,7 @@ async function resolveEmail(email) {
 
 async function runStudent(template, studentId, vars, idx, total) {
   log(`Starting student ${idx + 1} of ${total} (ID: ${studentId})…`, 'accent');
+  debugPush({ event: 'student_start', studentIndex: idx, total });
 
   const steps = substituteVars(template, vars);
 
@@ -694,11 +744,29 @@ async function runStudent(template, studentId, vars, idx, total) {
     const step = steps[i];
 
     log(stepToEnglish(step));
+    const t0 = Date.now();
 
     try {
       const result = await runStep(step);
+      const ms = Date.now() - t0;
+
+      debugPush({
+        event: 'step',
+        stepIndex: i,
+        type: step.type,
+        name: step.name || undefined,
+        locator: (step.locators || {}).id_suffix || (step.locators || {}).id || undefined,
+        ok: result.ok,
+        ms,
+        err: result.ok ? undefined : result.err,
+        note: result.note || undefined,
+        swapped: result.swapped,
+        downloadedFile: result.downloadedFile,
+      });
+
       if (!result.ok) {
         log(`Could not complete: ${result.err}`, 'err');
+        debugPush({ event: 'student_fail', stepIndex: i });
         return 'failed';
       }
       if (step.type === 'swap_dates') {
@@ -712,11 +780,15 @@ async function runStudent(template, studentId, vars, idx, total) {
         log(`✓ Downloaded: ${result.downloadedFile}`, 'ok');
       }
     } catch (e) {
+      const ms = Date.now() - t0;
+      debugPush({ event: 'step', stepIndex: i, type: step.type, ok: false, ms, err: e.message });
       log(`Error on step ${i + 1}: ${e.message}`, 'err');
+      debugPush({ event: 'student_fail', stepIndex: i });
       return 'failed';
     }
   }
 
+  debugPush({ event: 'student_done' });
   return 'succeeded';
 }
 
@@ -728,6 +800,7 @@ async function runBatch(template, studentIds) {
     return;
   }
   resetState();
+  debugClear();
   state.running = true;
 
   // Find or create an ASAP tab to use as our workspace.
@@ -761,16 +834,23 @@ async function runBatch(template, studentIds) {
 
     if (isEmail) {
       log(`Looking up student ID for ${sid}…`, 'info');
+      debugPush({ event: 'email_lookup', input: '[EMAIL]' });
       try {
         resolvedId = await resolveEmail(sid);
         log(`Found student ID: ${resolvedId}`, 'info');
+        debugPush({ event: 'email_lookup_ok' });
       } catch (e) {
         log(`Could not find student for email "${sid}": ${e.message}`, 'err');
+        debugPush({ event: 'email_lookup_fail', err: e.message });
         state.failed++;
         toPanel({ type: 'progress', current: i + 1, total, studentId: sid, status: 'failed' });
         continue;
       }
     }
+
+    // Register resolved ID as sensitive so it gets scrubbed from debug output.
+    _debugSensitive.push(resolvedId);
+    if (isEmail) _debugSensitive.push(sid);
 
     const vars = { studentid: resolvedId, email: isEmail ? sid : '' };
     state.activeTabId = state.mainTabId; // reset to main tab for each student

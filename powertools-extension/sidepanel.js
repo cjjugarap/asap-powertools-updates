@@ -35,6 +35,7 @@ const reviewSteps     = document.getElementById('review-steps');
 const btnSaveProc     = document.getElementById('btn-save-proc');
 const btnReClean      = document.getElementById('btn-re-clean');
 const btnDiscard      = document.getElementById('btn-discard');
+const btnDebug        = document.getElementById('btn-debug');
 const apiKeyInput     = document.getElementById('api-key-input');
 const btnSaveSettings = document.getElementById('btn-save-settings');
 const btnBackSettings = document.getElementById('btn-back-settings');
@@ -385,12 +386,28 @@ chrome.runtime.onMessage.addListener((msg) => {
     btnStop.disabled = false;
     const { succeeded, failed, stopped } = msg;
     setStatus(`${stopped ? 'Stopped. ' : 'Done. '}${succeeded} completed, ${failed} needed attention.`);
+    btnDebug.style.display = '';
   }
 
   if (msg.type === 'recorded_step') {
     recordedRawSteps.push(msg.step);
     logRec(stepToEnglish(msg.step));
   }
+});
+
+// ── Debug log download ────────────────────────────────────────────────────────
+
+btnDebug.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'get_debug_log' }, (resp) => {
+    if (!resp || !resp.log) return;
+    const blob = new Blob([JSON.stringify(resp.log, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `asap-debug-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────────
