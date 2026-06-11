@@ -562,7 +562,8 @@ function waitForDownloadComplete(downloadId, timeoutMs = 120000) {
       } else if (delta.state && delta.state.current === 'interrupted') {
         clearTimeout(timer);
         chrome.downloads.onChanged.removeListener(onChange);
-        reject(new Error('Download was interrupted'));
+        const reason = delta.error ? delta.error.current : 'unknown';
+        reject(new Error(`Download was interrupted (${reason})`));
       }
     }
     chrome.downloads.onChanged.addListener(onChange);
@@ -1012,6 +1013,12 @@ async function runStep(step) {
     } catch (e) {
       return { ok: false, err: 'Download failed: ' + e.message };
     }
+  }
+
+  // Optional post-step delay: give the page time to finish rendering before
+  // the next step runs (useful after btnFilter when ASAP builds the report).
+  if (step.waitAfterMs && step.waitAfterMs > 0) {
+    await new Promise(r => setTimeout(r, step.waitAfterMs));
   }
 
   return result;

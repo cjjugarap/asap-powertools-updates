@@ -131,7 +131,8 @@
       "nth": 0,
       "locators": {
         "id": "btnFilter"
-      }
+      },
+      "waitAfterMs": 10000
     },
     {
       "type": "click",
