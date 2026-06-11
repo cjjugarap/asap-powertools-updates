@@ -227,20 +227,18 @@ chrome.downloads.onCreated.addListener((item) => {
   chrome.downloads.cancel(item.id);
 });
 
-// onDeterminingFilename: for the primary download (being canceled above),
-// return true (async mode) so Chrome keeps waiting and never shows a dialog.
-// For the silent retry, call suggest() with the correct filename.
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   if (item.id === state.primaryDownloadId) {
-    // Primary is already canceled. Stay in async mode so Chrome doesn't show
-    // a dialog while waiting — the cancel will abort this state.
+    // Primary download is being canceled — stay in async mode so Chrome
+    // never reaches the "Ask where to save" dialog while waiting.
     return true;
   }
-  if (state.retryDownloadName) {
-    const filename = state.retryDownloadName;
-    state.retryDownloadName = null;
-    suggest({ filename, conflictAction: 'uniquify' });
-  }
+  // Always call suggest() so Chrome never shows a dialog for ANY download.
+  // If we have a known filename queued (transcript), use it; otherwise let
+  // Chrome use its own suggestion (preserves default behavior for other files).
+  const filename = state.retryDownloadName || null;
+  if (filename) state.retryDownloadName = null;
+  suggest({ filename: filename || item.filename, conflictAction: 'uniquify' });
 });
 
 // Reveal the preferred download folder in the OS file manager.
