@@ -35,11 +35,12 @@ const reviewSteps     = document.getElementById('review-steps');
 const btnSaveProc     = document.getElementById('btn-save-proc');
 const btnReClean      = document.getElementById('btn-re-clean');
 const btnDiscard      = document.getElementById('btn-discard');
-const btnDebug        = document.getElementById('btn-debug');
 const apiKeyInput     = document.getElementById('api-key-input');
 const btnSaveSettings = document.getElementById('btn-save-settings');
 const btnBackSettings = document.getElementById('btn-back-settings');
 const settingsStatus  = document.getElementById('settings-status');
+const btnDebug        = document.getElementById('btn-debug');
+const settingsVersion = document.getElementById('settings-version');
 
 // ── Screen navigation ─────────────────────────────────────────────────────────
 
@@ -331,6 +332,8 @@ settingsBtn.addEventListener('click', () => {
     apiKeyInput.value = resp && resp.apiKey ? '••••••••' : '';
     apiKeyInput.dataset.loaded = resp && resp.apiKey ? 'yes' : '';
     settingsStatus.textContent = '';
+    const v = chrome.runtime.getManifest().version;
+    settingsVersion.textContent = `v${v}`;
     showScreen('settings');
     headerSub.textContent = 'Settings';
   });
@@ -368,6 +371,22 @@ btnBackSettings.addEventListener('click', () => {
   headerSub.textContent = 'Select a process or set up a new one.';
 });
 
+btnDebug.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'get_debug_log' }, (resp) => {
+    if (!resp || !resp.log) {
+      alert('No debug log available yet. Run a batch first.');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(resp.log, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `asap-debug-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+});
+
 // ── Messages from background ──────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -386,7 +405,6 @@ chrome.runtime.onMessage.addListener((msg) => {
     btnStop.disabled = false;
     const { succeeded, failed, stopped } = msg;
     setStatus(`${stopped ? 'Stopped. ' : 'Done. '}${succeeded} completed, ${failed} needed attention.`);
-    btnDebug.style.display = '';
   }
 
   if (msg.type === 'recorded_step') {
@@ -395,20 +413,6 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-// ── Debug log download ────────────────────────────────────────────────────────
-
-btnDebug.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'get_debug_log' }, (resp) => {
-    if (!resp || !resp.log) return;
-    const blob = new Blob([JSON.stringify(resp.log, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `asap-debug-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  });
-});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 

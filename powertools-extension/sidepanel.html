@@ -310,12 +310,16 @@
       <button id="btn-save-settings">Save</button>
       <button id="btn-back-settings">Back</button>
     </div>
+
+    <div class="setting-group" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--border)">
+      <button id="btn-debug" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:7px;cursor:pointer;width:100%;text-align:left;font-weight:normal;">
+        ⬇ Download debug log
+      </button>
+      <p id="settings-version" style="font-size:10px;color:var(--muted);text-align:right"></p>
+    </div>
   </div>
 
-  <div id="status-bar">
-    Ready.
-    <button id="btn-debug" title="Download debug log" style="display:none;float:right;background:none;border:none;cursor:pointer;color:var(--muted);font-size:11px;padding:0;flex:none;font-weight:normal;">⬇ debug log</button>
-  </div>
+  <div id="status-bar">Ready.</div>
 
   <script src="sidepanel.js"></script>
 </body>
