@@ -20,18 +20,13 @@ const procList        = document.getElementById('proc-list');
 const feed            = document.getElementById('feed');
 const statusBar       = document.getElementById('status-bar');
 const headerSub       = document.getElementById('header-sub');
-const btnOne          = document.getElementById('btn-one');
-const btnAll          = document.getElementById('btn-all');
+const btnRun          = document.getElementById('btn-run');
 const btnStop         = document.getElementById('btn-stop');
 const btnConfirm      = document.getElementById('btn-confirm');
 const btnCancel       = document.getElementById('btn-cancel');
 const batchSection    = document.getElementById('batch-input-section');
 const studentIdsInput = document.getElementById('student-ids-input');
 const newProcBtn      = document.getElementById('new-proc-btn');
-const modalOverlay    = document.getElementById('modal-overlay');
-const modalInput      = document.getElementById('modal-input');
-const modalOk         = document.getElementById('modal-ok');
-const modalCancel     = document.getElementById('modal-cancel');
 const settingsBtn     = document.getElementById('settings-btn');
 const recFeed         = document.getElementById('rec-feed');
 const btnStopRec      = document.getElementById('btn-stop-rec');
@@ -140,8 +135,7 @@ function deleteProc(tpl, card) {
     card.remove();
     if (selectedProcess && selectedProcess.id === tpl.id) {
       selectedProcess = null;
-      btnOne.disabled = true;
-      btnAll.disabled = true;
+      btnRun.disabled = true;
     }
   });
 }
@@ -151,8 +145,7 @@ function selectProcess(tpl, card) {
   selectedProcess = tpl;
   document.querySelectorAll('.proc-card').forEach(c => c.classList.remove('selected'));
   card.classList.add('selected');
-  btnOne.disabled = false;
-  btnAll.disabled = false;
+  btnRun.disabled = false;
   clearFeed();
   log(`— ${tpl.name} —`, 'accent');
   log(`${tpl.steps.length} steps ready to run.`, 'muted');
@@ -169,56 +162,42 @@ function reloadProcessCards() {
 
 function setRunning(isRunning) {
   running = isRunning;
-  btnOne.disabled  = isRunning || !selectedProcess;
-  btnAll.disabled  = isRunning || !selectedProcess;
-  btnStop.style.display    = isRunning ? '' : 'none';
-  btnConfirm.style.display = 'none';
-  btnCancel.style.display  = 'none';
-  batchSection.style.display = 'none';
-  btnAll.style.display = '';
-  btnOne.style.display = '';
+  btnRun.disabled = isRunning || !selectedProcess;
+  btnStop.style.display = isRunning ? 'block' : 'none';
+  hideRunInput();
 }
 
-function showBatchInput() {
+function showRunInput() {
   batchSection.style.display = 'block';
-  btnAll.style.display = 'none';
-  btnOne.style.display = 'none';
-  btnConfirm.style.display = '';
-  btnCancel.style.display  = '';
+  btnRun.style.display    = 'none';
+  btnConfirm.style.display = 'block';
+  btnCancel.style.display  = 'block';
   studentIdsInput.value = '';
   studentIdsInput.focus();
 }
 
-function hideBatchInput() {
+function hideRunInput() {
   batchSection.style.display = 'none';
-  btnAll.style.display = '';
-  btnOne.style.display = '';
+  btnRun.style.display     = 'block';
   btnConfirm.style.display = 'none';
   btnCancel.style.display  = 'none';
 }
 
 // ── Run buttons ───────────────────────────────────────────────────────────────
 
-btnOne.addEventListener('click', () => {
+btnRun.addEventListener('click', () => {
   if (!selectedProcess) return;
-  modalInput.value = '';
-  modalOverlay.classList.add('open');
-  modalInput.focus();
-});
-
-btnAll.addEventListener('click', () => {
-  if (!selectedProcess) return;
-  showBatchInput();
+  showRunInput();
 });
 
 btnConfirm.addEventListener('click', () => {
-  const ids = studentIdsInput.value.split('\n').map(s => s.trim()).filter(Boolean);
-  if (!ids.length) { log('Please enter at least one student ID.', 'warn'); return; }
-  hideBatchInput();
-  startBatch(ids);
+  const entries = studentIdsInput.value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!entries.length) { log('Please enter at least one student ID or email.', 'warn'); return; }
+  hideRunInput();
+  startBatch(entries);
 });
 
-btnCancel.addEventListener('click', hideBatchInput);
+btnCancel.addEventListener('click', hideRunInput);
 
 btnStop.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'stop' });
@@ -238,22 +217,13 @@ function startBatch(studentIds) {
   });
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────────
+// ── Textarea keyboard shortcuts ───────────────────────────────────────────────
 
-function closeModal() { modalOverlay.classList.remove('open'); }
-
-modalOk.addEventListener('click', () => {
-  const sid = modalInput.value.trim();
-  if (!sid) return;
-  closeModal();
-  startBatch([sid]);
+studentIdsInput.addEventListener('keydown', e => {
+  // Ctrl+Enter (or Cmd+Enter) confirms; Escape cancels.
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') btnConfirm.click();
+  if (e.key === 'Escape') hideRunInput();
 });
-modalCancel.addEventListener('click', closeModal);
-modalInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') modalOk.click();
-  if (e.key === 'Escape') closeModal();
-});
-modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) closeModal(); });
 
 // ── New process (recording) ───────────────────────────────────────────────────
 

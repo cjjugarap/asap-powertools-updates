@@ -655,7 +655,9 @@ async function runStep(step) {
 // ── Run one student ───────────────────────────────────────────────────────────
 
 async function runStudent(template, studentId, vars, idx, total) {
-  log(`Starting student ${idx + 1} of ${total} (ID: ${studentId})…`, 'accent');
+  const isEmail = studentId.includes('@');
+  const label = isEmail ? `email: ${studentId}` : `ID: ${studentId}`;
+  log(`Starting student ${idx + 1} of ${total} (${label})…`, 'accent');
 
   const steps = substituteVars(template, vars);
 
@@ -726,7 +728,10 @@ async function runBatch(template, studentIds) {
     const sid = studentIds[i].trim();
     if (!sid) continue;
 
-    const vars = { studentid: sid };
+    const isEmail = sid.includes('@');
+    const vars = isEmail
+      ? { studentid: sid, email: sid }
+      : { studentid: sid, email: '' };
     state.activeTabId = state.mainTabId; // reset to main tab for each student
     state.popupTabId = null;
 

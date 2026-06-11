@@ -133,12 +133,11 @@
     }
     button:disabled { opacity: .4; cursor: not-allowed; }
     button:not(:disabled):hover { opacity: .85; }
-    #btn-one     { background: var(--accent); color: var(--bg); }
-    #btn-all     { background: var(--green);  color: var(--bg); }
+    #btn-run     { background: var(--accent); color: var(--bg); }
     #btn-stop    { background: var(--red);    color: #fff; display: none; }
-    #btn-confirm { background: var(--accent); color: var(--bg); display: none; }
+    #btn-confirm { background: var(--green);  color: var(--bg); }
     #btn-cancel  { background: var(--surface); color: var(--muted);
-                   border: 1px solid var(--border); display: none; }
+                   border: 1px solid var(--border); }
 
     /* ── Recording screen ──────────────── */
     #screen-recording { padding: 10px 8px; gap: 8px; }
@@ -217,29 +216,6 @@
       color: var(--muted); border-top: 1px solid var(--border);
     }
 
-    /* ── Modal ─────────────────────────── */
-    #modal-overlay {
-      display: none; position: fixed; inset: 0;
-      background: rgba(0,0,0,.6); align-items: center; justify-content: center; z-index: 100;
-    }
-    #modal-overlay.open { display: flex; }
-    .modal {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; padding: 18px 20px; width: 280px; max-width: 95%;
-    }
-    .modal h3 { font-size: 14px; margin-bottom: 8px; }
-    .modal p  { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
-    .modal input {
-      width: 100%; background: var(--bg); border: 1px solid var(--border);
-      border-radius: 4px; color: var(--text); font-size: 13px;
-      padding: 7px 10px; margin-bottom: 12px;
-    }
-    .modal input:focus { outline: none; border-color: var(--accent); }
-    .modal-btns { display: flex; gap: 8px; }
-    .modal-btns button { flex: 1; }
-    #modal-ok { background: var(--accent); color: var(--bg); }
-    #modal-cancel { background: var(--surface); color: var(--muted);
-                    border: 1px solid var(--border); }
   </style>
 </head>
 <body>
@@ -270,16 +246,15 @@
     </div>
 
     <div id="action-bar">
-      <div id="batch-input-section">
-        <label>Paste student IDs — one per line:</label>
-        <textarea id="student-ids-input" placeholder="12345&#10;67890&#10;11223"></textarea>
+      <div id="batch-input-section" style="display:none">
+        <label>Student IDs or email addresses — one per line:</label>
+        <textarea id="student-ids-input" placeholder="12345&#10;jane.doe@school.edu&#10;67890"></textarea>
       </div>
       <div class="btn-row">
-        <button id="btn-one"     disabled>▶ Run for one student</button>
-        <button id="btn-all"     disabled>⚡ Run for everyone</button>
-        <button id="btn-stop"           >■ Stop</button>
-        <button id="btn-confirm"        >✓ Run batch</button>
-        <button id="btn-cancel"         >✕ Cancel</button>
+        <button id="btn-run"     disabled>▶ Run</button>
+        <button id="btn-confirm"         style="display:none">✓ Start</button>
+        <button id="btn-cancel"          style="display:none">✕ Cancel</button>
+        <button id="btn-stop"            style="display:none">■ Stop</button>
       </div>
     </div>
   </div>
@@ -338,19 +313,6 @@
   </div>
 
   <div id="status-bar">Ready.</div>
-
-  <!-- Single-student ID modal -->
-  <div id="modal-overlay">
-    <div class="modal">
-      <h3>Run for one student</h3>
-      <p>Enter the student's ASAP ID:</p>
-      <input id="modal-input" type="text" placeholder="e.g. 12345" autocomplete="off">
-      <div class="modal-btns">
-        <button id="modal-ok">Run</button>
-        <button id="modal-cancel">Cancel</button>
-      </div>
-    </div>
-  </div>
 
   <script src="sidepanel.js"></script>
 </body>
