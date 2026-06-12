@@ -962,6 +962,20 @@ async function executeStepInPage(step) {
         // does. The subsequent Save button click (next step) then persists correctly.
         const [dy, dm, dd] = origDipl.split('-').map(Number);
         const [gy, gm, gd] = origGrad.split('-').map(Number);
+
+        // $find is registered by Telerik's JS after the postback DOM update.
+        // If not yet available, poll briefly — it typically appears within 200ms.
+        if (typeof $find !== 'function') {
+          await new Promise(resolve => {
+            let tries = 0;
+            const poll = setInterval(() => {
+              if (typeof $find === 'function' || ++tries >= 30) {
+                clearInterval(poll); resolve();
+              }
+            }, 100);
+          });
+        }
+
         const diplPicker = typeof $find === 'function' ? $find(diplEl.id) : null;
         const gradPicker = typeof $find === 'function' ? $find(gradEl.id) : null;
         if (diplPicker && gradPicker && typeof diplPicker.set_selectedDate === 'function') {
