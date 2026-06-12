@@ -1177,6 +1177,7 @@ async function runStep(step) {
       target: { tabId },
       func: executeStepInPage,
       args: [step],
+      world: 'MAIN',
     });
     result = r;
   } catch (e) {
