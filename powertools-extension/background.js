@@ -931,19 +931,36 @@ async function executeStepInPage(step) {
       const d1 = new Date(diplEl.value);
       const d2 = new Date(gradEl.value);
       if (isNaN(d1) || isNaN(d2) || !diplEl.value || !gradEl.value) {
-        return { ok: true, swapped: false, note: 'One or both dates are empty' };
+        return { ok: true, swapped: false, note: 'One or both dates are empty',
+                 diplValue: diplEl.value, gradValue: gradEl.value };
       }
+      const origDipl = diplEl.value;
+      const origGrad = gradEl.value;
       // Diploma date must be later than (or equal to) graduation date.
       // If diploma < graduation, the dates were entered backwards — swap them.
       if (d1 < d2) {
-        const tmp = diplEl.value;
-        diplEl.value = gradEl.value;
-        gradEl.value = tmp;
-        dispatch(diplEl, ['change', 'input', 'blur']);
-        dispatch(gradEl, ['change', 'input', 'blur']);
-        return { ok: true, swapped: true };
+        // Simulate real user input so date-picker widgets update their internal
+        // state: focus → select-all → type new value → trigger events.
+        // Just setting .value isn't enough for some ASP.NET date-picker controls.
+        function typeInto(el, val) {
+          el.focus();
+          el.select();
+          // Use the native setter so frameworks/widgets see the change.
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+          ).set;
+          nativeSetter.call(el, val);
+          el.dispatchEvent(new Event('input',  { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new Event('blur',   { bubbles: true }));
+        }
+        typeInto(diplEl, origGrad);
+        typeInto(gradEl, origDipl);
+        return { ok: true, swapped: true, diplBefore: origDipl, gradBefore: origGrad,
+                 diplAfter: diplEl.value, gradAfter: gradEl.value };
       }
-      return { ok: true, swapped: false, note: 'Dates are in correct order' };
+      return { ok: true, swapped: false, note: 'Dates are in correct order',
+               diplValue: origDipl, gradValue: origGrad };
     }
 
     return { ok: false, err: `Unknown step type: ${t}` };
@@ -1253,6 +1270,9 @@ async function runStudent(template, studentId, vars, idx, total) {
         diag: result.ok ? undefined : result.diag,
         note: result.note || undefined,
         swapped: result.swapped,
+        diplBefore: result.diplBefore, gradBefore: result.gradBefore,
+        diplAfter:  result.diplAfter,  gradAfter:  result.gradAfter,
+        diplValue:  result.diplValue,  gradValue:  result.gradValue,
         retried: result.retried || undefined,
         downloadedFile: result.downloadedFile,
         openHref: result.openHref ? debugRedact(result.openHref) : undefined,
