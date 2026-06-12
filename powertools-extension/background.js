@@ -963,21 +963,30 @@ async function executeStepInPage(step) {
         const [dy, dm, dd] = origDipl.split('-').map(Number);
         const [gy, gm, gd] = origGrad.split('-').map(Number);
 
-        // $find is registered by Telerik's JS after the postback DOM update.
-        // If not yet available, poll briefly — it typically appears within 200ms.
-        if (typeof $find !== 'function') {
-          await new Promise(resolve => {
-            let tries = 0;
-            const poll = setInterval(() => {
-              if (typeof $find === 'function' || ++tries >= 30) {
-                clearInterval(poll); resolve();
-              }
-            }, 100);
-          });
+        // Telerik registers $find as Sys.Application.findComponent after page init.
+        // Try multiple access paths: $find, Sys.Application.findComponent, and
+        // any frame whose window has $find (ASAP may load content in an iframe).
+        function findPicker(id) {
+          if (typeof $find === 'function') return $find(id);
+          if (typeof Sys !== 'undefined' && Sys?.Application?.findComponent)
+            return Sys.Application.findComponent(id);
+          // Search iframes for the frame that owns the picker
+          for (const fr of Array.from(document.querySelectorAll('iframe'))) {
+            try {
+              const w = fr.contentWindow;
+              if (typeof w.$find === 'function') return w.$find(id);
+              if (w.Sys?.Application?.findComponent) return w.Sys.Application.findComponent(id);
+            } catch (_) {}
+          }
+          return null;
         }
 
-        const diplPicker = typeof $find === 'function' ? $find(diplEl.id) : null;
-        const gradPicker = typeof $find === 'function' ? $find(gradEl.id) : null;
+        diag.hasFindFn    = typeof $find === 'function';
+        diag.hasSys       = typeof Sys !== 'undefined';
+        diag.iframeCount  = document.querySelectorAll('iframe').length;
+
+        const diplPicker = findPicker(diplEl.id);
+        const gradPicker = findPicker(gradEl.id);
         if (diplPicker && gradPicker && typeof diplPicker.set_selectedDate === 'function') {
           diplPicker.set_selectedDate(new Date(gy, gm - 1, gd));
           gradPicker.set_selectedDate(new Date(dy, dm - 1, dd));
@@ -990,7 +999,6 @@ async function executeStepInPage(step) {
         // Fallback: DOM-only (RadDatePicker internal state not updated;
         // Save button click may not persist — logged so we can diagnose).
         diag.method = 'dom-fallback';
-        diag.hasFindFn = typeof $find === 'function';
         diag.diplPickerFound = !!diplPicker;
         diag.gradPickerFound = !!gradPicker;
         function typeInto(el, val) {
