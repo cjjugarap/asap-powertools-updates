@@ -16,13 +16,14 @@
       --green:   #3fb950;
       --yellow:  #ffd23f;
       --red:     #f85149;
+      --base-font: 14px;
     }
 
     body {
       background: var(--bg);
       color: var(--text);
       font-family: "Segoe UI", system-ui, sans-serif;
-      font-size: 14px;
+      font-size: var(--base-font);
       height: 100vh;
       display: flex;
       flex-direction: column;
@@ -37,15 +38,16 @@
       flex-shrink: 0;
       display: flex;
       align-items: center;
-      width: 100%;
+      justify-content: space-between;
+      gap: 8px;
     }
     .header-text { flex: 1; min-width: 0; }
-    header h1 { font-size: 14px; font-weight: 700; color: var(--accent); }
-    #header-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    header h1 { font-size: 1em; font-weight: 700; color: var(--accent); }
+    #header-sub { font-size: .79em; color: var(--muted); margin-top: 2px; }
     #settings-btn {
       background: none; border: none; cursor: pointer; flex-shrink: 0;
-      color: var(--muted); font-size: 16px; padding: 2px; margin-left: 8px;
-      transition: color .15s; line-height: 1;
+      color: var(--muted); font-size: 1.15em; padding: 2px;
+      transition: color .15s; line-height: 1; margin-left: auto;
     }
     #settings-btn:hover { color: var(--text); }
 
@@ -316,6 +318,15 @@
       <div style="display:flex;gap:6px;">
         <button id="btn-browse-folder" style="flex:1;padding:7px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;font-size:12px;">Browse…</button>
         <button id="btn-open-folder" title="Open downloads folder" style="flex-shrink:0;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;font-size:14px;line-height:1;">📂</button>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <label>Text size</label>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button id="btn-font-down" style="flex:none;width:32px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;">A−</button>
+        <span id="font-size-label" style="font-size:.85em;color:var(--muted);flex:1;text-align:center;"></span>
+        <button id="btn-font-up"   style="flex:none;width:32px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;">A+</button>
       </div>
     </div>
 

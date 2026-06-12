@@ -46,6 +46,29 @@ const btnDebug            = document.getElementById('btn-debug');
 const headerVersion       = document.getElementById('header-version');
 const showFolderRow       = document.getElementById('show-folder-row');
 const btnShowFolder       = document.getElementById('btn-show-folder');
+const btnFontDown         = document.getElementById('btn-font-down');
+const btnFontUp           = document.getElementById('btn-font-up');
+const fontSizeLabel       = document.getElementById('font-size-label');
+
+// ── Font size ─────────────────────────────────────────────────────────────────
+
+const FONT_SIZES = [12, 13, 14, 15, 16, 17, 18];
+let currentFontIdx = 2; // default = 14px
+
+function applyFontSize(idx) {
+  currentFontIdx = Math.max(0, Math.min(FONT_SIZES.length - 1, idx));
+  const px = FONT_SIZES[currentFontIdx];
+  document.documentElement.style.setProperty('--base-font', px + 'px');
+  fontSizeLabel.textContent = px + 'px';
+  chrome.storage.local.set({ fontSize: currentFontIdx });
+}
+
+chrome.storage.local.get('fontSize', ({ fontSize }) => {
+  applyFontSize(fontSize != null ? fontSize : 2);
+});
+
+btnFontDown.addEventListener('click', () => applyFontSize(currentFontIdx - 1));
+btnFontUp.addEventListener('click',   () => applyFontSize(currentFontIdx + 1));
 
 // ── Screen navigation ─────────────────────────────────────────────────────────
 
