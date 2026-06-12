@@ -948,25 +948,48 @@ async function executeStepInPage(step) {
       const origGrad = gradEl.value;
 
       if (d1 < d2) {
-        // Primary approach: direct FormData POST.
-        // Building FormData from the live form and overriding the date field
-        // values guarantees the server receives the swapped pair, regardless
-        // of any date-picker widget state or JS interceptors on form submit.
-        const saveBtn = document.querySelector('[id$="btnsavecreditprogramdetails"]');
-        if (saveBtn && diplEl.name && gradEl.name) {
+        // The date fields are Telerik RadDatePicker controls. The server
+        // reads from hidden *_dateInput_ClientState JSON fields, not the
+        // visible text inputs. We must swap the ClientState JSON values.
+        const diplCSEl = document.querySelector(`[id$="${step.diploma_suffix}_dateInput_ClientState"]`);
+        const gradCSEl = document.querySelector(`[id$="${step.graduation_suffix}_dateInput_ClientState"]`);
+        const saveBtn  = document.querySelector('[id$="btnsavecreditprogramdetails"]');
+
+        if (diplCSEl && gradCSEl && diplCSEl.value && gradCSEl.value && saveBtn) {
           try {
+            const diplCS = JSON.parse(diplCSEl.value);
+            const gradCS = JSON.parse(gradCSEl.value);
+
+            // RadDatePicker ClientState date format: "YYYY-MM-DD-00-00-00"
+            // lastSetTextBoxValue display format:    "M/D/YYYY" (no leading zeros)
+            function toRadVal(iso) { return iso + '-00-00-00'; }
+            function toRadDisplay(iso) {
+              const [y, m, d] = iso.split('-');
+              return `${parseInt(m)}/${parseInt(d)}/${y}`;
+            }
+
+            const newDiplCS = { ...diplCS,
+              validationText: toRadVal(origGrad), valueAsString: toRadVal(origGrad),
+              lastSetTextBoxValue: toRadDisplay(origGrad) };
+            const newGradCS = { ...gradCS,
+              validationText: toRadVal(origDipl), valueAsString: toRadVal(origDipl),
+              lastSetTextBoxValue: toRadDisplay(origDipl) };
+
             const form = diplEl.closest('form') || document.forms[0];
             const fd = new FormData(form);
-            fd.set(diplEl.name, origGrad);   // diploma ← old graduation value
-            fd.set(gradEl.name, origDipl);   // graduation ← old diploma value
-            // Signal which button fired the postback (works for both submit
-            // buttons and onclick=__doPostBack buttons).
+            fd.set(diplCSEl.name, JSON.stringify(newDiplCS));
+            fd.set(gradCSEl.name, JSON.stringify(newGradCS));
+            // Also update the visible text inputs to match.
+            fd.set(diplEl.name, toRadDisplay(origGrad));
+            fd.set(gradEl.name, toRadDisplay(origDipl));
             if (saveBtn.name) fd.set(saveBtn.name, saveBtn.value || '');
-            fd.set('__EVENTTARGET',  saveBtn.name || '');
+            fd.set('__EVENTTARGET', '');
             fd.set('__EVENTARGUMENT', '');
             const resp = await fetch(form.action || location.href, {
               method: 'POST', credentials: 'same-origin', body: fd,
             });
+            diag.diplCSName = diplCSEl.name;
+            diag.gradCSName = gradCSEl.name;
             return { ok: true, swapped: true, savedInPlace: resp.ok,
                      fetchStatus: resp.status, diag,
                      diplBefore: origDipl, gradBefore: origGrad };
