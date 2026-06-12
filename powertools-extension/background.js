@@ -928,24 +928,38 @@ async function executeStepInPage(step) {
       if (!diplEl || !gradEl) {
         return { ok: true, swapped: false, note: 'Date fields not found — skipping' };
       }
+
+      const diag = {
+        diplDisabled: diplEl.disabled, diplReadOnly: diplEl.readOnly,
+        gradDisabled: gradEl.disabled, gradReadOnly: gradEl.readOnly,
+        diplType: diplEl.type, gradType: gradEl.type,
+      };
+
       const d1 = new Date(diplEl.value);
       const d2 = new Date(gradEl.value);
       if (isNaN(d1) || isNaN(d2) || !diplEl.value || !gradEl.value) {
         return { ok: true, swapped: false, note: 'One or both dates are empty',
-                 diplValue: diplEl.value, gradValue: gradEl.value };
+                 diplValue: diplEl.value, gradValue: gradEl.value, diag };
       }
       const origDipl = diplEl.value;
       const origGrad = gradEl.value;
       // Diploma date must be later than (or equal to) graduation date.
       // If diploma < graduation, the dates were entered backwards — swap them.
       if (d1 < d2) {
+        // Force-enable fields — if they are disabled, the browser won't include
+        // them in the form POST and the server will never see the swapped values.
+        diplEl.disabled = false;
+        gradEl.disabled = false;
+        diplEl.removeAttribute('disabled');
+        gradEl.removeAttribute('disabled');
+        diplEl.readOnly = false;
+        gradEl.readOnly = false;
+
         // Simulate real user input so date-picker widgets update their internal
         // state: focus → select-all → type new value → trigger events.
-        // Just setting .value isn't enough for some ASP.NET date-picker controls.
         function typeInto(el, val) {
           el.focus();
           el.select();
-          // Use the native setter so frameworks/widgets see the change.
           const nativeSetter = Object.getOwnPropertyDescriptor(
             window.HTMLInputElement.prototype, 'value'
           ).set;
@@ -956,11 +970,12 @@ async function executeStepInPage(step) {
         }
         typeInto(diplEl, origGrad);
         typeInto(gradEl, origDipl);
-        return { ok: true, swapped: true, diplBefore: origDipl, gradBefore: origGrad,
+        return { ok: true, swapped: true, diag,
+                 diplBefore: origDipl, gradBefore: origGrad,
                  diplAfter: diplEl.value, gradAfter: gradEl.value };
       }
       return { ok: true, swapped: false, note: 'Dates are in correct order',
-               diplValue: origDipl, gradValue: origGrad };
+               diplValue: origDipl, gradValue: origGrad, diag };
     }
 
     return { ok: false, err: `Unknown step type: ${t}` };
