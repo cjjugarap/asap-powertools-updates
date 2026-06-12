@@ -57,7 +57,7 @@ Rules:
 2. Remove navigate steps that are postback reloads (same URL as the previous navigate, or same as the page_url of the previous action step).
 3. For locators, prefer id_suffix over full id (more stable across ASP.NET viewstate). Drop locators that are empty.
 4. All fill step values are already [REDACTED] — keep them as-is.
-5. If you see fill or click steps touching fields whose id_suffix matches "txtDiplomaDate" or "txtGraduationDate", replace them with a single step: {"type":"swap_dates","diploma_suffix":"txtDiplomaDate","graduation_suffix":"txtGraduationDate"}
+5. If you see fill or click steps touching fields whose id_suffix matches "txtDiplomaDate" or "txtGraduationDate", replace them with a single step: {"type":"swap_dates","diploma_suffix":"txtDiplomaDate","graduation_suffix":"txtGraduationDate"} — this checks whether graduation date < diploma date (wrong order) and swaps them if so.
 6. Remove any steps where name or locators are completely empty and the step can't be identified.
 7. Return ONLY a valid JSON array — no explanation, no markdown, no code fences.
 
@@ -933,9 +933,9 @@ async function executeStepInPage(step) {
       if (isNaN(d1) || isNaN(d2) || !diplEl.value || !gradEl.value) {
         return { ok: true, swapped: false, note: 'One or both dates are empty' };
       }
-      // Diploma date must be later than (or equal to) graduation date.
-      // If diploma < graduation, the dates were entered backwards — swap them.
-      if (d1 < d2) {
+      // Graduation date must be later than (or equal to) diploma date.
+      // If graduation < diploma, the dates were entered backwards — swap them.
+      if (d2 < d1) {
         const tmp = diplEl.value;
         diplEl.value = gradEl.value;
         gradEl.value = tmp;

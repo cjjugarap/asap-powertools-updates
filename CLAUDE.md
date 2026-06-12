@@ -20,6 +20,10 @@ The inspector captures **structure** (what elements exist) but not **behavior** 
    "Print" does not always open a browser print dialog — it may trigger a file download. Verify what each button *produces* rather than assuming from its name.
    > Example: `btnPrint` in the transcript popup downloads a PDF, not a browser dialog.
 
+### Date swap logic
+
+`swap_dates` checks whether **graduation date < diploma date** (i.e., the dates are in the wrong order) and swaps them if so. The correct order is diploma date ≤ graduation date. Do NOT swap when diploma < graduation — that is already correct.
+
 ### Mapping Protocol (going forward)
 
 For each step in a process being mapped:
