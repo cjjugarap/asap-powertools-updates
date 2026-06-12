@@ -140,6 +140,7 @@ let state = {
   pendingDownloadUrl: null,
   lastSuggestedFilename: null,
   retryDownloadName: null,
+  markerDownloadPath: null,      // set when openDownloadFolder drops a marker file
   primaryDownloadId: null,      // ID of the page-triggered download being canceled
   currentStudentId: null,
   currentStudentName: null,
@@ -161,6 +162,7 @@ function resetState() {
     pendingDownloadUrl: null,
     lastSuggestedFilename: null,
     retryDownloadName: null,
+    markerDownloadPath: null,
     primaryDownloadId: null,
     currentStudentId: null,
     currentStudentName: null,
@@ -222,6 +224,12 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
     state.lastDownloadId = item.id;
     debugPush({ event: 'download_named', id: item.id, url: item.url, to: filename });
     suggest({ filename, conflictAction: 'uniquify' });
+  } else if (state.markerDownloadPath) {
+    // openDownloadFolder dropped a marker file — route it to the subfolder so
+    // chrome.downloads.show() opens the right folder, not the default Downloads.
+    const filename = state.markerDownloadPath;
+    state.markerDownloadPath = null;
+    suggest({ filename, conflictAction: 'overwrite' });
   } else {
     // Any other download (e.g. the debug log JSON) keeps its own name.
     suggest();
@@ -244,8 +252,11 @@ async function openDownloadFolder() {
   }
   // Drop a marker file in the preferred subfolder so we can reveal that folder.
   // Must use safeDownloadPath — leading dots and illegal chars cause "Invalid filename".
+  // Set markerDownloadPath before starting so onDeterminingFilename routes it correctly
+  // (data: URLs default to "download.txt" otherwise).
   const subfolder = await getDownloadSubfolder();
   const markerPath = safeDownloadPath(subfolder, 'asap-open-folder.tmp');
+  state.markerDownloadPath = markerPath;
   chrome.downloads.download({
     url: 'data:text/plain,',
     filename: markerPath,
