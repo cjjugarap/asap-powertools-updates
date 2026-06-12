@@ -279,6 +279,7 @@ let _debugSensitive = []; // runtime list of values to scrub before export
 function debugClear() {
   debugLog = [];
   _debugSensitive = [];
+  chrome.storage.session.remove('debugLog').catch(() => {});
 }
 
 function debugRedact(text) {
@@ -296,9 +297,18 @@ function debugRedact(text) {
 
 function debugPush(entry) {
   debugLog.push({ t: Date.now(), ...entry });
+  chrome.storage.session.set({ debugLog }).catch(() => {});
 }
 
-function getDebugLog() {
+async function getDebugLog() {
+  // If the service worker was killed and restarted, the in-memory log is gone.
+  // Recover it from session storage, which survives SW restarts.
+  if (debugLog.length === 0) {
+    try {
+      const stored = await chrome.storage.session.get('debugLog');
+      if (stored.debugLog?.length) debugLog = stored.debugLog;
+    } catch (_) {}
+  }
   const redacted = debugLog.map(e => {
     const out = { ...e };
     if (out.err)  out.err  = debugRedact(out.err);
@@ -414,7 +424,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ── Debug log ──
   if (msg.type === 'get_debug_log') {
-    sendResponse({ log: getDebugLog() });
+    getDebugLog().then(log => sendResponse({ log }));
     return true;
   }
 
