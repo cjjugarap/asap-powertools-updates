@@ -113,10 +113,24 @@ Chrome kills idle MV3 service workers after ~30s. Any in-memory state (including
 
 **Fix:** Write to `chrome.storage.session` on every `debugPush` call. On export, recover from storage if the in-memory array is empty. `chrome.storage.session` survives service worker restarts within a browser session.
 
-### Console injection as a debugging tool
+### Console injection first — always
 
-When the extension fails silently or behaves unexpectedly on a complex page, console injection into the live page is faster than adding logging and reloading the extension. Use it to:
-- Verify what values fields actually hold at runtime
-- Test a proposed fix (FormData POST, Telerik API call, etc.) before writing extension code
-- Identify which frame context a global lives in (check the frame selector in DevTools Console)
+When a step fails or a page element behaves unexpectedly, **do not write extension code until the fix has been proven in the browser console first.** The iteration cycle for extension code (edit → reload extension → run batch → export log) is slow and lossy. The console gives immediate feedback.
+
+**Mandatory workflow for any unknown page behavior:**
+1. Console injection to understand the page (what fields exist, what values they hold, what globals are available, which frame context you're in)
+2. Console injection to test the proposed fix (does the API call work? does the POST save? does the value persist after clicking Save?)
+3. Only then write extension code
+
+**What console injection caught that extension iterations missed:**
+- That `btnPrint` calls `window.open()` rather than triggering a native download
+- That the date fields are Telerik RadDatePicker controls, not plain text inputs
+- That `$find` exists in the top frame but not in any iframe
+- That `set_selectedDate()` correctly updates the picker and the visible input
+- That the FormData POST was sending to the wrong fields (visible input, not `_ClientState`)
+- That `__EVENTTARGET` must be set to the button's UniqueID, not empty string
+
+Each of those discoveries via console took under a minute. Each discovery via extension iteration took one or more full debug cycles.
+
+**Frame context:** The DevTools Console has a frame selector (bottom-left dropdown). Always confirm which frame you're in when testing — `console.log(location.href)` at the top of any test snippet. If `$find` or another global works in the console but not in the extension, check the frame selector first.
 
