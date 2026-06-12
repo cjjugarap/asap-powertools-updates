@@ -144,8 +144,8 @@ let state = {
   currentStudentId: null,
   currentStudentName: null,
   lastDownloadId: null,
-  swapSavedInPlace: false,      // true when swap_dates used FormData POST to persist dates
 };
+
 
 function resetState() {
   state = {
@@ -165,7 +165,6 @@ function resetState() {
     currentStudentId: null,
     currentStudentName: null,
     lastDownloadId: null,
-    swapSavedInPlace: false,
   };
 }
 
@@ -948,61 +947,28 @@ async function executeStepInPage(step) {
       const origGrad = gradEl.value;
 
       if (d1 < d2) {
-        // The date fields are Telerik RadDatePicker controls. The server
-        // reads from hidden *_dateInput_ClientState JSON fields, not the
-        // visible text inputs. We must swap the ClientState JSON values.
-        const diplCSEl = document.querySelector(`[id$="${step.diploma_suffix}_dateInput_ClientState"]`);
-        const gradCSEl = document.querySelector(`[id$="${step.graduation_suffix}_dateInput_ClientState"]`);
-        const saveBtn  = document.querySelector('[id$="btnsavecreditprogramdetails"]');
-
-        if (diplCSEl && gradCSEl && diplCSEl.value && gradCSEl.value && saveBtn) {
-          try {
-            const diplCS = JSON.parse(diplCSEl.value);
-            const gradCS = JSON.parse(gradCSEl.value);
-
-            // RadDatePicker ClientState date format: "YYYY-MM-DD-00-00-00"
-            // lastSetTextBoxValue display format:    "M/D/YYYY" (no leading zeros)
-            function toRadVal(iso) { return iso + '-00-00-00'; }
-            function toRadDisplay(iso) {
-              const [y, m, d] = iso.split('-');
-              return `${parseInt(m)}/${parseInt(d)}/${y}`;
-            }
-
-            const newDiplCS = { ...diplCS,
-              validationText: toRadVal(origGrad), valueAsString: toRadVal(origGrad),
-              lastSetTextBoxValue: toRadDisplay(origGrad) };
-            const newGradCS = { ...gradCS,
-              validationText: toRadVal(origDipl), valueAsString: toRadVal(origDipl),
-              lastSetTextBoxValue: toRadDisplay(origDipl) };
-
-            const form = diplEl.closest('form') || document.forms[0];
-            const fd = new FormData(form);
-            fd.set(diplCSEl.name, JSON.stringify(newDiplCS));
-            fd.set(gradCSEl.name, JSON.stringify(newGradCS));
-            // Also update the visible text inputs to match.
-            fd.set(diplEl.name, toRadDisplay(origGrad));
-            fd.set(gradEl.name, toRadDisplay(origDipl));
-            // saveBtn uses WebForm_DoPostBackWithOptions (clientSubmit:false),
-            // which calls __doPostBack(buttonName,'') — sets __EVENTTARGET, does
-            // NOT include the button name/value as a POST field.
-            fd.set('__EVENTTARGET',  saveBtn.name);
-            fd.set('__EVENTARGUMENT', '');
-            const resp = await fetch(form.action || location.href, {
-              method: 'POST', credentials: 'same-origin', body: fd,
-            });
-            diag.diplCSName = diplCSEl.name;
-            diag.gradCSName = gradCSEl.name;
-            return { ok: true, swapped: true, savedInPlace: resp.ok,
-                     fetchStatus: resp.status, diag,
-                     diplBefore: origDipl, gradBefore: origGrad };
-          } catch (fetchErr) {
-            diag.fetchErr = fetchErr.message;
-          }
+        // Use Telerik RadDatePicker's own JS API to update internal state.
+        // Direct DOM writes don't reach RadDatePicker internals; $find().set_selectedDate()
+        // does. The subsequent Save button click (next step) then persists correctly.
+        const [dy, dm, dd] = origDipl.split('-').map(Number);
+        const [gy, gm, gd] = origGrad.split('-').map(Number);
+        const diplPicker = typeof $find === 'function' ? $find(diplEl.id) : null;
+        const gradPicker = typeof $find === 'function' ? $find(gradEl.id) : null;
+        if (diplPicker && gradPicker && typeof diplPicker.set_selectedDate === 'function') {
+          diplPicker.set_selectedDate(new Date(gy, gm - 1, gd));
+          gradPicker.set_selectedDate(new Date(dy, dm - 1, dd));
+          diag.method = 'telerik-api';
+          diag.diplId  = diplEl.id;
+          diag.gradId  = gradEl.id;
+          return { ok: true, swapped: true, diag,
+                   diplBefore: origDipl, gradBefore: origGrad };
         }
-
-        // Fallback: DOM-only swap (save button click handled by next step).
-        diplEl.disabled = false; diplEl.removeAttribute('disabled'); diplEl.readOnly = false;
-        gradEl.disabled = false; gradEl.removeAttribute('disabled'); gradEl.readOnly = false;
+        // Fallback: DOM-only (RadDatePicker internal state not updated;
+        // Save button click may not persist — logged so we can diagnose).
+        diag.method = 'dom-fallback';
+        diag.hasFindFn = typeof $find === 'function';
+        diag.diplPickerFound = !!diplPicker;
+        diag.gradPickerFound = !!gradPicker;
         function typeInto(el, val) {
           el.focus(); el.select();
           const ns = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -1302,20 +1268,6 @@ async function runStudent(template, studentId, vars, idx, total) {
     if (state.stopRequested) return 'stopped';
     const step = steps[i];
 
-    // Skip the manual save button if swap_dates already persisted dates via POST.
-    if (state.swapSavedInPlace && step.type === 'click') {
-      const locId = (step.locators || {}).id || '';
-      const locSuffix = (step.locators || {}).id_suffix || '';
-      if (locId === 'btnsavecreditprogramdetails' || locSuffix === 'btnsavecreditprogramdetails') {
-        log('Skipping save button — dates already saved by swap step.', 'muted');
-        debugPush({ event: 'step', stepIndex: i, type: step.type,
-                    locator: locId || locSuffix, tabId: state.activeTabId,
-                    ok: true, ms: 0, note: 'skipped — swap_dates savedInPlace' });
-        state.swapSavedInPlace = false;
-        continue;
-      }
-    }
-
     // After landing on a StudentDetail page, read the name and prepare
     // the download filename: LastName_FirstName_ID_transcript.pdf
     if (step.type === 'navigate' && (step.url || '').includes('StudentDetail')) {
@@ -1342,8 +1294,6 @@ async function runStudent(template, studentId, vars, idx, total) {
         diag: (result.ok && step.type !== 'swap_dates') ? undefined : result.diag,
         note: result.note || undefined,
         swapped: result.swapped,
-        savedInPlace: result.savedInPlace,
-        fetchStatus: result.fetchStatus,
         diplBefore: result.diplBefore, gradBefore: result.gradBefore,
         diplAfter:  result.diplAfter,  gradAfter:  result.gradAfter,
         diplValue:  result.diplValue,  gradValue:  result.gradValue,
@@ -1380,10 +1330,6 @@ async function runStudent(template, studentId, vars, idx, total) {
       if (step.type === 'swap_dates') {
         if (result.swapped) {
           log('Dates were in the wrong order — fixed automatically.', 'warn');
-          if (result.savedInPlace) {
-            state.swapSavedInPlace = true;
-            log('Dates saved via direct POST — save button will be skipped.', 'muted');
-          }
         } else {
           log(result.note || 'Dates are already correct.', 'muted');
         }
