@@ -933,9 +933,9 @@ async function executeStepInPage(step) {
       if (isNaN(d1) || isNaN(d2) || !diplEl.value || !gradEl.value) {
         return { ok: true, swapped: false, note: 'One or both dates are empty' };
       }
-      // Graduation date must be later than (or equal to) diploma date.
-      // If graduation < diploma, the dates were entered backwards — swap them.
-      if (d2 < d1) {
+      // Diploma date must be later than (or equal to) graduation date.
+      // If diploma < graduation, the dates were entered backwards — swap them.
+      if (d1 < d2) {
         const tmp = diplEl.value;
         diplEl.value = gradEl.value;
         gradEl.value = tmp;

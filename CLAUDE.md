@@ -22,7 +22,7 @@ The inspector captures **structure** (what elements exist) but not **behavior** 
 
 ### Date swap logic
 
-`swap_dates` checks whether **graduation date < diploma date** (i.e., the dates are in the wrong order) and swaps them if so. The correct order is diploma date ≤ graduation date. Do NOT swap when diploma < graduation — that is already correct.
+`swap_dates` checks whether **diploma date < graduation date** (i.e., the dates are in the wrong order) and swaps them if so. The correct order is diploma date ≥ graduation date (diploma is awarded after the graduation ceremony). Swap when diploma < graduation.
 
 ### Mapping Protocol (going forward)
 
