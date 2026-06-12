@@ -957,63 +957,13 @@ async function executeStepInPage(step) {
       const origGrad = gradEl.value;
 
       if (d1 < d2) {
-        // Use Telerik RadDatePicker's own JS API to update internal state.
-        // Direct DOM writes don't reach RadDatePicker internals; $find().set_selectedDate()
-        // does. The subsequent Save button click (next step) then persists correctly.
-        const [dy, dm, dd] = origDipl.split('-').map(Number);
-        const [gy, gm, gd] = origGrad.split('-').map(Number);
-
-        // Telerik registers $find as Sys.Application.findComponent after page init.
-        // Try multiple access paths: $find, Sys.Application.findComponent, and
-        // any frame whose window has $find (ASAP may load content in an iframe).
-        function findPicker(id) {
-          if (typeof $find === 'function') return $find(id);
-          if (typeof Sys !== 'undefined' && Sys?.Application?.findComponent)
-            return Sys.Application.findComponent(id);
-          // Search iframes for the frame that owns the picker
-          for (const fr of Array.from(document.querySelectorAll('iframe'))) {
-            try {
-              const w = fr.contentWindow;
-              if (typeof w.$find === 'function') return w.$find(id);
-              if (w.Sys?.Application?.findComponent) return w.Sys.Application.findComponent(id);
-            } catch (_) {}
-          }
-          return null;
-        }
-
-        diag.hasFindFn    = typeof $find === 'function';
-        diag.hasSys       = typeof Sys !== 'undefined';
-        diag.iframeCount  = document.querySelectorAll('iframe').length;
-
-        const diplPicker = findPicker(diplEl.id);
-        const gradPicker = findPicker(gradEl.id);
-        if (diplPicker && gradPicker && typeof diplPicker.set_selectedDate === 'function') {
-          diplPicker.set_selectedDate(new Date(gy, gm - 1, gd));
-          gradPicker.set_selectedDate(new Date(dy, dm - 1, dd));
-          diag.method = 'telerik-api';
-          diag.diplId  = diplEl.id;
-          diag.gradId  = gradEl.id;
-          return { ok: true, swapped: true, diag,
-                   diplBefore: origDipl, gradBefore: origGrad };
-        }
-        // Fallback: DOM-only (RadDatePicker internal state not updated;
-        // Save button click may not persist — logged so we can diagnose).
-        diag.method = 'dom-fallback';
-        diag.diplPickerFound = !!diplPicker;
-        diag.gradPickerFound = !!gradPicker;
-        function typeInto(el, val) {
-          el.focus(); el.select();
-          const ns = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-          ns.call(el, val);
-          el.dispatchEvent(new Event('input',  { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          el.dispatchEvent(new Event('blur',   { bubbles: true }));
-        }
-        typeInto(diplEl, origGrad);
-        typeInto(gradEl, origDipl);
-        return { ok: true, swapped: true, diag,
+        // Signal to runStep that a MAIN-world Telerik API call is needed.
+        // $find lives in the page's MAIN world; executeScript defaults to ISOLATED
+        // world which cannot access page globals. runStep will issue a second
+        // synchronous executeScript with world:'MAIN' to call set_selectedDate.
+        return { ok: true, swapped: true, needsTelerikSwap: true, diag,
                  diplBefore: origDipl, gradBefore: origGrad,
-                 diplAfter: diplEl.value, gradAfter: gradEl.value };
+                 diplId: diplEl.id, gradId: gradEl.id };
       }
       return { ok: true, swapped: false, note: 'Dates are in correct order',
                diplValue: origDipl, gradValue: origGrad, diag };
@@ -1177,14 +1127,42 @@ async function runStep(step) {
       target: { tabId },
       func: executeStepInPage,
       args: [step],
-      world: 'MAIN',
     });
     result = r;
   } catch (e) {
     return { ok: false, err: e.message };
   }
 
+  if (!result) return { ok: false, err: 'executeScript returned null' };
   if (!result.ok) return result;
+
+  // swap_dates signals that a MAIN-world Telerik API call is needed.
+  // executeScript defaults to ISOLATED world (no page globals); a second
+  // synchronous call with world:'MAIN' reaches $find and set_selectedDate.
+  if (result.needsTelerikSwap) {
+    try {
+      const [{ result: tr }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: (diplId, gradId, origDipl, origGrad) => {
+          const [dy, dm, dd] = origDipl.split('-').map(Number);
+          const [gy, gm, gd] = origGrad.split('-').map(Number);
+          const dp = typeof $find === 'function' ? $find(diplId) : null;
+          const gp = typeof $find === 'function' ? $find(gradId) : null;
+          if (!dp || !gp) return { ok: false, hasFindFn: typeof $find === 'function' };
+          dp.set_selectedDate(new Date(gy, gm - 1, gd));
+          gp.set_selectedDate(new Date(dy, dm - 1, dd));
+          return { ok: true };
+        },
+        args: [result.diplId, result.gradId, result.diplBefore, result.gradBefore],
+      });
+      result = { ...result, needsTelerikSwap: undefined,
+                 diag: { ...result.diag, telerikSwap: tr } };
+    } catch (e) {
+      result = { ...result, needsTelerikSwap: undefined,
+                 diag: { ...result.diag, telerikSwapErr: e.message } };
+    }
+  }
 
   // Case 1: window.open captured — open as a new popup tab directly.
   if (result.openHref) {
