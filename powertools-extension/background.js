@@ -982,8 +982,10 @@ async function executeStepInPage(step) {
             // Also update the visible text inputs to match.
             fd.set(diplEl.name, toRadDisplay(origGrad));
             fd.set(gradEl.name, toRadDisplay(origDipl));
-            if (saveBtn.name) fd.set(saveBtn.name, saveBtn.value || '');
-            fd.set('__EVENTTARGET', '');
+            // saveBtn uses WebForm_DoPostBackWithOptions (clientSubmit:false),
+            // which calls __doPostBack(buttonName,'') — sets __EVENTTARGET, does
+            // NOT include the button name/value as a POST field.
+            fd.set('__EVENTTARGET',  saveBtn.name);
             fd.set('__EVENTARGUMENT', '');
             const resp = await fetch(form.action || location.href, {
               method: 'POST', credentials: 'same-origin', body: fd,
