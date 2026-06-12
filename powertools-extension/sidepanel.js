@@ -44,6 +44,8 @@ const btnBackSettings     = document.getElementById('btn-back-settings');
 const settingsStatus      = document.getElementById('settings-status');
 const btnDebug            = document.getElementById('btn-debug');
 const headerVersion       = document.getElementById('header-version');
+const showFolderRow       = document.getElementById('show-folder-row');
+const btnShowFolder       = document.getElementById('btn-show-folder');
 
 // ── Screen navigation ─────────────────────────────────────────────────────────
 
@@ -169,6 +171,7 @@ function setRunning(isRunning) {
   running = isRunning;
   btnRun.disabled = isRunning || !selectedProcess;
   btnStop.style.display = isRunning ? 'block' : 'none';
+  if (isRunning) showFolderRow.style.display = 'none';
   hideRunInput();
 }
 
@@ -398,6 +401,10 @@ btnBackSettings.addEventListener('click', () => {
   headerSub.textContent = 'Select a process or set up a new one.';
 });
 
+btnShowFolder.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'open_download_folder' });
+});
+
 btnDebug.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'get_debug_log' }, (resp) => {
     if (!resp || !resp.log) {
@@ -432,6 +439,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     btnStop.disabled = false;
     const { succeeded, failed, stopped } = msg;
     setStatus(`${stopped ? 'Stopped. ' : 'Done. '}${succeeded} completed, ${failed} needed attention.`);
+    if (succeeded > 0) showFolderRow.style.display = 'block';
   }
 
   if (msg.type === 'recorded_step') {
