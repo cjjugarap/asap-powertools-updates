@@ -144,6 +144,7 @@ let state = {
   currentStudentId: null,
   currentStudentName: null,
   lastDownloadId: null,
+  swapSavedInPlace: false,      // true when swap_dates used FormData POST to persist dates
 };
 
 function resetState() {
@@ -164,6 +165,7 @@ function resetState() {
     currentStudentId: null,
     currentStudentName: null,
     lastDownloadId: null,
+    swapSavedInPlace: false,
   };
 }
 
@@ -931,8 +933,9 @@ async function executeStepInPage(step) {
 
       const diag = {
         diplDisabled: diplEl.disabled, diplReadOnly: diplEl.readOnly,
+        diplType: diplEl.type, diplName: diplEl.name,
         gradDisabled: gradEl.disabled, gradReadOnly: gradEl.readOnly,
-        diplType: diplEl.type, gradType: gradEl.type,
+        gradType: gradEl.type, gradName: gradEl.name,
       };
 
       const d1 = new Date(diplEl.value);
@@ -943,27 +946,42 @@ async function executeStepInPage(step) {
       }
       const origDipl = diplEl.value;
       const origGrad = gradEl.value;
-      // Diploma date must be later than (or equal to) graduation date.
-      // If diploma < graduation, the dates were entered backwards — swap them.
-      if (d1 < d2) {
-        // Force-enable fields — if they are disabled, the browser won't include
-        // them in the form POST and the server will never see the swapped values.
-        diplEl.disabled = false;
-        gradEl.disabled = false;
-        diplEl.removeAttribute('disabled');
-        gradEl.removeAttribute('disabled');
-        diplEl.readOnly = false;
-        gradEl.readOnly = false;
 
-        // Simulate real user input so date-picker widgets update their internal
-        // state: focus → select-all → type new value → trigger events.
+      if (d1 < d2) {
+        // Primary approach: direct FormData POST.
+        // Building FormData from the live form and overriding the date field
+        // values guarantees the server receives the swapped pair, regardless
+        // of any date-picker widget state or JS interceptors on form submit.
+        const saveBtn = document.querySelector('[id$="btnsavecreditprogramdetails"]');
+        if (saveBtn && diplEl.name && gradEl.name) {
+          try {
+            const form = diplEl.closest('form') || document.forms[0];
+            const fd = new FormData(form);
+            fd.set(diplEl.name, origGrad);   // diploma ← old graduation value
+            fd.set(gradEl.name, origDipl);   // graduation ← old diploma value
+            // Signal which button fired the postback (works for both submit
+            // buttons and onclick=__doPostBack buttons).
+            if (saveBtn.name) fd.set(saveBtn.name, saveBtn.value || '');
+            fd.set('__EVENTTARGET',  saveBtn.name || '');
+            fd.set('__EVENTARGUMENT', '');
+            const resp = await fetch(form.action || location.href, {
+              method: 'POST', credentials: 'same-origin', body: fd,
+            });
+            return { ok: true, swapped: true, savedInPlace: resp.ok,
+                     fetchStatus: resp.status, diag,
+                     diplBefore: origDipl, gradBefore: origGrad };
+          } catch (fetchErr) {
+            diag.fetchErr = fetchErr.message;
+          }
+        }
+
+        // Fallback: DOM-only swap (save button click handled by next step).
+        diplEl.disabled = false; diplEl.removeAttribute('disabled'); diplEl.readOnly = false;
+        gradEl.disabled = false; gradEl.removeAttribute('disabled'); gradEl.readOnly = false;
         function typeInto(el, val) {
-          el.focus();
-          el.select();
-          const nativeSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype, 'value'
-          ).set;
-          nativeSetter.call(el, val);
+          el.focus(); el.select();
+          const ns = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          ns.call(el, val);
           el.dispatchEvent(new Event('input',  { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
           el.dispatchEvent(new Event('blur',   { bubbles: true }));
@@ -1259,6 +1277,20 @@ async function runStudent(template, studentId, vars, idx, total) {
     if (state.stopRequested) return 'stopped';
     const step = steps[i];
 
+    // Skip the manual save button if swap_dates already persisted dates via POST.
+    if (state.swapSavedInPlace && step.type === 'click') {
+      const locId = (step.locators || {}).id || '';
+      const locSuffix = (step.locators || {}).id_suffix || '';
+      if (locId === 'btnsavecreditprogramdetails' || locSuffix === 'btnsavecreditprogramdetails') {
+        log('Skipping save button — dates already saved by swap step.', 'muted');
+        debugPush({ event: 'step', stepIndex: i, type: step.type,
+                    locator: locId || locSuffix, tabId: state.activeTabId,
+                    ok: true, ms: 0, note: 'skipped — swap_dates savedInPlace' });
+        state.swapSavedInPlace = false;
+        continue;
+      }
+    }
+
     // After landing on a StudentDetail page, read the name and prepare
     // the download filename: LastName_FirstName_ID_transcript.pdf
     if (step.type === 'navigate' && (step.url || '').includes('StudentDetail')) {
@@ -1282,9 +1314,11 @@ async function runStudent(template, studentId, vars, idx, total) {
         ok: result.ok,
         ms,
         err: result.ok ? undefined : result.err,
-        diag: result.ok ? undefined : result.diag,
+        diag: (result.ok && step.type !== 'swap_dates') ? undefined : result.diag,
         note: result.note || undefined,
         swapped: result.swapped,
+        savedInPlace: result.savedInPlace,
+        fetchStatus: result.fetchStatus,
         diplBefore: result.diplBefore, gradBefore: result.gradBefore,
         diplAfter:  result.diplAfter,  gradAfter:  result.gradAfter,
         diplValue:  result.diplValue,  gradValue:  result.gradValue,
@@ -1321,6 +1355,10 @@ async function runStudent(template, studentId, vars, idx, total) {
       if (step.type === 'swap_dates') {
         if (result.swapped) {
           log('Dates were in the wrong order — fixed automatically.', 'warn');
+          if (result.savedInPlace) {
+            state.swapSavedInPlace = true;
+            log('Dates saved via direct POST — save button will be skipped.', 'muted');
+          }
         } else {
           log(result.note || 'Dates are already correct.', 'muted');
         }
