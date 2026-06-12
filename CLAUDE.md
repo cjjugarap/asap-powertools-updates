@@ -73,3 +73,50 @@ No personally identifiable information is ever captured, stored, transmitted, or
 ## Branch
 
 Active development: `claude/jolly-pascal-4pz9rt`
+
+---
+
+## Chrome Extension Lessons Learned
+
+### executeScript world — always specify `world: 'MAIN'` when page globals are needed
+
+`chrome.scripting.executeScript` defaults to `world: 'ISOLATED'` (the content script sandbox). ISOLATED world can read and write DOM properties but has **no access to page JavaScript globals** — `window.$find`, `Sys`, Telerik, jQuery, etc. are all undefined.
+
+The DevTools console runs in MAIN world, so globals are visible there. This creates a false impression that page globals will also be available in injected scripts.
+
+**Rule:** If a step needs to call any page-defined JavaScript (widget APIs, framework globals, `window.*`), that call must run in a separate synchronous `executeScript` with `world: 'MAIN'`.
+
+**Caveat:** `world: 'MAIN'` with an `async` function does not work — Chrome does not await Promises from MAIN world scripts, so `executeScript` returns `null`. Use a **synchronous** function for any MAIN world call and pass all needed values as `args`.
+
+> Pattern used in `swap_dates`: ISOLATED world (async) reads the DOM and returns picker IDs + date values. A second synchronous MAIN world call receives those values as `args` and calls `$find().set_selectedDate()`.
+
+### Telerik RadDatePicker — DOM writes are ignored on save
+
+Telerik RadDatePicker maintains its own internal JavaScript state. Writing directly to the visible text input (even using the native value setter + dispatching `input`/`change`/`blur` events) does NOT update the picker's internal state. When the form is submitted, Telerik re-syncs the hidden `_ClientState` fields from its internal state, overwriting any DOM changes.
+
+The only reliable way to update a RadDatePicker's value before a form save is via the Telerik JavaScript API: `$find(elementId).set_selectedDate(new Date(...))`.
+
+### FormData POST to ASP.NET WebForms — approach with extreme caution
+
+Manually constructing a FormData POST to bypass a button click looks simple but has many failure modes with ASP.NET:
+
+- **ViewState** encodes server-side control state; the server may restore original values from ViewState, silently ignoring POST body fields
+- **Telerik controls** read from `_ClientState` JSON hidden fields, not from the text input name
+- **`__EVENTTARGET`** must match the button's UniqueID exactly when the button uses `WebForm_DoPostBackWithOptions` with `clientSubmit: false` — sending an empty `__EVENTTARGET` runs Page_Load without any button handler, which can clear or reset fields
+- A `200 OK` response does not mean the data was saved — it only means the server processed the request
+
+**Lesson:** Before attempting a FormData POST, verify with a console injection what the server actually does with the values (check the response HTML for the field values). In most cases, clicking the real button via the extension is safer and simpler.
+
+### MV3 service worker — debug log must be persisted
+
+Chrome kills idle MV3 service workers after ~30s. Any in-memory state (including debug logs) is lost on restart. If debug events are only stored in a module-level array, every export after a run completes will show empty entries.
+
+**Fix:** Write to `chrome.storage.session` on every `debugPush` call. On export, recover from storage if the in-memory array is empty. `chrome.storage.session` survives service worker restarts within a browser session.
+
+### Console injection as a debugging tool
+
+When the extension fails silently or behaves unexpectedly on a complex page, console injection into the live page is faster than adding logging and reloading the extension. Use it to:
+- Verify what values fields actually hold at runtime
+- Test a proposed fix (FormData POST, Telerik API call, etc.) before writing extension code
+- Identify which frame context a global lives in (check the frame selector in DevTools Console)
+
