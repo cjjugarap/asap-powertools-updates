@@ -550,17 +550,27 @@ function waitForNewTab(timeoutMs = 5000) {
   });
 }
 
+// Keep the MV3 service worker alive while waiting for async events.
+// Chrome kills idle service workers after ~30s; periodic API calls reset the timer.
+function keepaliveInterval(ms = 20000) {
+  return setInterval(() => chrome.runtime.getPlatformInfo(() => {}), ms);
+}
+
 function waitForDownload(timeoutMs = 45000) {
   let onCreated;
   let timer;
+  let ka;
   const promise = new Promise((resolve, reject) => {
+    ka = keepaliveInterval();
     timer = setTimeout(() => {
+      clearInterval(ka);
       chrome.downloads.onCreated.removeListener(onCreated);
       reject(new Error('Download did not start within 45 seconds'));
     }, timeoutMs);
 
     onCreated = function(item) {
       clearTimeout(timer);
+      clearInterval(ka);
       chrome.downloads.onCreated.removeListener(onCreated);
       state.lastDownloadId = item.id;
       waitForDownloadComplete(item.id, 120000).then(resolve).catch(reject);
@@ -570,6 +580,7 @@ function waitForDownload(timeoutMs = 45000) {
   // Allow caller to cancel the listener if it needs to bail out early.
   promise.abort = () => {
     clearTimeout(timer);
+    clearInterval(ka);
     if (onCreated) chrome.downloads.onCreated.removeListener(onCreated);
   };
   return promise;
@@ -577,7 +588,9 @@ function waitForDownload(timeoutMs = 45000) {
 
 function waitForDownloadComplete(downloadId, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
+    const ka = keepaliveInterval();
     const timer = setTimeout(() => {
+      clearInterval(ka);
       chrome.downloads.onChanged.removeListener(onChange);
       reject(new Error('Download did not complete within 2 minutes'));
     }, timeoutMs);
@@ -586,12 +599,14 @@ function waitForDownloadComplete(downloadId, timeoutMs = 120000) {
       if (delta.id !== downloadId) return;
       if (delta.state && delta.state.current === 'complete') {
         clearTimeout(timer);
+        clearInterval(ka);
         chrome.downloads.onChanged.removeListener(onChange);
         chrome.downloads.search({ id: downloadId }, items => {
           resolve(items[0] || { filename: 'unknown' });
         });
       } else if (delta.state && delta.state.current === 'interrupted') {
         clearTimeout(timer);
+        clearInterval(ka);
         chrome.downloads.onChanged.removeListener(onChange);
         const reason = delta.error ? delta.error.current : 'unknown';
         reject(new Error(`Download was interrupted (${reason})`));
@@ -700,19 +715,25 @@ async function executeStepInPage(step) {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
 
-      // btnPrint: clicking it makes the server respond with the PDF as an
-      // attachment, which the browser downloads natively (no window.open, no
-      // navigation). We do NOT intercept it here — the background service
-      // worker's onDeterminingFilename listener renames the download and routes
-      // it to the configured subfolder. This mirrors navigator.py, which simply
-      // lets Playwright's download event handle saving via download.save_as().
+      // btnPrint: in the transcript popup, this button calls window.open(pdfUrl)
+      // to open the PDF — but extension clicks are untrusted gestures, so
+      // window.open is blocked by the browser. Intercept it to capture the URL.
       const isPrint = loc.id === 'btnPrint' || (loc.id_suffix || '') === 'btnPrint';
       if (isPrint) {
+        let capturedPdfUrl = null;
+        const origOpenPrint = window.open;
+        window.open = (url) => { capturedPdfUrl = String(url); return null; };
         const postbackPrint = waitForPostback();
         el.click();
-        // The download fires during/after the postback. Wait for the postback
-        // so the click is fully processed before we return.
-        await postbackPrint;
+        // Restore AFTER postback so async window.open calls in ASP.NET's
+        // ScriptManager response callbacks are also captured.
+        try { await postbackPrint; } finally { window.open = origOpenPrint; }
+        // Extra tick for any window.open call queued after endRequest fires.
+        await new Promise(r => setTimeout(r, 200));
+        if (capturedPdfUrl) {
+          return { ok: true, pdfUrl: new URL(capturedPdfUrl, location.href).href };
+        }
+        // window.open not called — fall through; download may fire natively.
         return { ok: true, isPrint: true, waitForNav: false };
       }
 
@@ -1132,17 +1153,32 @@ async function runStep(step) {
     log('Report ready — saving PDF…', 'muted');
   }
 
-  // Download handling: the Print click triggered a native browser download.
-  // onDeterminingFilename already renamed it and routed it to the subfolder
-  // (using the filename we queued before the click). Here we just wait for it
-  // to finish — exactly like navigator.py waits on its download event.
+  // pdfUrl path: btnPrint called window.open(pdfUrl) — our intercept captured it.
+  // Navigate the popup tab to the URL; the server responds with
+  // Content-Disposition: attachment, which triggers a native Chrome download.
+  // onDeterminingFilename fires and renames it to the correct subfolder path.
+  if (result.pdfUrl) {
+    log('Saving transcript…', 'muted');
+    // downloadPromise is already listening on onCreated — reuse it.
+    await chrome.tabs.update(state.activeTabId, { url: result.pdfUrl });
+    try {
+      const dlItem = await (downloadPromise || waitForDownload(45000));
+      result.downloadedFile = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : 'transcript.pdf';
+    } catch (e) {
+      state.retryDownloadName = null;
+      return { ok: false, err: 'Download failed: ' + e.message };
+    }
+    return result;
+  }
+
+  // Fallback: download may have started natively (window.open wasn't used).
   if (downloadPromise) {
     log('Saving transcript…', 'muted');
     try {
       const dlItem = await downloadPromise;
       result.downloadedFile = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : 'file';
     } catch (e) {
-      state.retryDownloadName = null; // don't let a queued name leak to the next download
+      state.retryDownloadName = null;
       return { ok: false, err: 'Download failed: ' + e.message };
     }
   }
@@ -1281,6 +1317,11 @@ async function runBatch(template, studentIds) {
   debugClear();
   state.running = true;
 
+  // Keep the MV3 service worker alive for the entire batch.
+  // Chrome kills idle service workers after ~30s; this periodic API call
+  // resets the idle timer so the worker isn't suspended mid-run.
+  const batchKeepalive = keepaliveInterval(20000);
+
   // Find or create an ASAP tab to use as our workspace.
   const tabs = await chrome.tabs.query({ url: '*://*.asapconnected.com/*' });
   if (tabs.length > 0) {
@@ -1356,6 +1397,7 @@ async function runBatch(template, studentIds) {
     });
   }
 
+  clearInterval(batchKeepalive);
   const stopped = state.stopRequested;
   state.running = false;
 
