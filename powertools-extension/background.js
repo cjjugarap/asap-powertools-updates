@@ -202,43 +202,34 @@ function safeDownloadPath(subfolder, filename) {
   return [...parts, file].join('/');
 }
 
-// ── Download interception ─────────────────────────────────────────────────────
-// onCreated fires BEFORE onDeterminingFilename (and thus before Chrome shows
-// any dialog). We cancel the page-triggered download here — at this point
-// Chrome hasn't reached the "Ask where to save" check yet — then re-initiate
-// it ourselves with saveAs:false via the USER_CANCELED retry path.
-
-chrome.downloads.onCreated.addListener((item) => {
-  if (!state.pendingDownloadName) return;
-
-  const name = state.pendingDownloadName;
-  state.pendingDownloadName = null;
-  const url = item.url || null;
-
-  let filename = name;
-  try { filename = safeDownloadPath(_cachedSubfolder, name); } catch (_) {}
-
-  state.pendingDownloadUrl = url;
-  state.lastSuggestedFilename = filename;
-  state.retryDownloadName = filename; // consumed by onDeterminingFilename for retry
-  state.primaryDownloadId = item.id;
-
-  // Cancel before onDeterminingFilename runs → Chrome never shows any dialog.
-  chrome.downloads.cancel(item.id);
-});
+// ── Download filename + folder routing ────────────────────────────────────────
+// This is the extension equivalent of Playwright's download.save_as() in
+// navigator.py. When the Print button click triggers a native download,
+// onDeterminingFilename fires synchronously BEFORE Chrome writes the file.
+// Calling suggest() with our path renames the file to
+// LastName_FirstName_ID_transcript.pdf and routes it into the configured
+// subfolder — in a single step, no cancel, no re-download, no hang.
+//
+// We do NOT cancel the download (that was the root cause of every prior hang)
+// and we do NOT touch data: URLs (onDeterminingFilename doesn't fire for those).
 
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-  if (item.id === state.primaryDownloadId) {
-    // Primary download is being canceled — stay in async mode so Chrome
-    // never reaches the "Ask where to save" dialog while waiting.
-    return true;
+  if (state.retryDownloadName) {
+    // A transcript download is expected — rename + route to subfolder.
+    const filename = state.retryDownloadName;
+    state.retryDownloadName = null;
+    state.lastDownloadId = item.id;
+    debugPush({ event: 'download_named', id: item.id, url: item.url, to: filename });
+    suggest({ filename, conflictAction: 'uniquify' });
+  } else {
+    // Any other download (e.g. the debug log JSON) keeps its own name.
+    suggest();
   }
-  // Always call suggest() so Chrome never shows a dialog for ANY download.
-  // If we have a known filename queued (transcript), use it; otherwise let
-  // Chrome use its own suggestion (preserves default behavior for other files).
-  const filename = state.retryDownloadName || null;
-  if (filename) state.retryDownloadName = null;
-  suggest({ filename: filename || item.filename, conflictAction: 'uniquify' });
+  // Synchronous suggest → Chrome proceeds immediately, no "Ask where to save"
+  // delay introduced by us. (If the user has Chrome's global "Ask where to save
+  // each file" setting ON, Chrome may still prompt — that setting is the only
+  // thing suggest() cannot override; turning it off makes saving fully silent,
+  // exactly as navigator.py's dedicated browser does.)
 });
 
 // Reveal the preferred download folder in the OS file manager.
@@ -420,33 +411,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ── Sidepanel download callbacks ──
-  if (msg.type === 'sidepanel_download_done') {
-    if (_sidepanelDownloadResolve) {
-      clearTimeout(_sidepanelDownloadTimer);
-      const resolve = _sidepanelDownloadResolve;
-      _sidepanelDownloadResolve = null;
-      _sidepanelDownloadReject  = null;
-      _sidepanelDownloadTimer   = null;
-      resolve({ filename: msg.filename, dlId: msg.dlId });
-    }
-    sendResponse({ ok: true });
-    return true;
-  }
-
-  if (msg.type === 'sidepanel_download_error') {
-    if (_sidepanelDownloadReject) {
-      clearTimeout(_sidepanelDownloadTimer);
-      const reject = _sidepanelDownloadReject;
-      _sidepanelDownloadResolve = null;
-      _sidepanelDownloadReject  = null;
-      _sidepanelDownloadTimer   = null;
-      reject(new Error(msg.err || 'Sidepanel download failed'));
-    }
-    sendResponse({ ok: true });
-    return true;
-  }
-
   // ── Debug log ──
   if (msg.type === 'get_debug_log') {
     sendResponse({ log: getDebugLog() });
@@ -603,7 +567,7 @@ function waitForDownload(timeoutMs = 45000) {
     };
     chrome.downloads.onCreated.addListener(onCreated);
   });
-  // Allow caller to cancel the listener (e.g. when pdfBase64 path is taken).
+  // Allow caller to cancel the listener if it needs to bail out early.
   promise.abort = () => {
     clearTimeout(timer);
     if (onCreated) chrome.downloads.onCreated.removeListener(onCreated);
@@ -736,43 +700,20 @@ async function executeStepInPage(step) {
       const el = findEl(loc, step.role, step.name, step.nth);
       if (!el) return { ok: false, err: `Element not found: ${step.name || step.role}` };
 
-      // btnPrint: the button calls window.open(pdfUrl) to trigger the download.
-      // Intercept that URL and fetch the PDF directly from the page context
-      // (same-origin, session cookies included) — bypasses Chrome's download
-      // pipeline entirely: no onCreated, no dialog, no Save As prompt.
+      // btnPrint: clicking it makes the server respond with the PDF as an
+      // attachment, which the browser downloads natively (no window.open, no
+      // navigation). We do NOT intercept it here — the background service
+      // worker's onDeterminingFilename listener renames the download and routes
+      // it to the configured subfolder. This mirrors navigator.py, which simply
+      // lets Playwright's download event handle saving via download.save_as().
       const isPrint = loc.id === 'btnPrint' || (loc.id_suffix || '') === 'btnPrint';
       if (isPrint) {
-        let capturedPdfUrl = null;
-        const origOpenPrint = window.open;
-        window.open = (url) => { capturedPdfUrl = String(url); return null; };
         const postbackPrint = waitForPostback();
         el.click();
-        // Wait for any postback/AJAX to complete BEFORE restoring window.open.
-        // The button may call window.open asynchronously in its server response
-        // callback — restoring early would miss it.
-        try { await postbackPrint; } finally { window.open = origOpenPrint; }
-        // Give async JS one more tick in case window.open fires after postback.
-        await new Promise(r => setTimeout(r, 100));
-
-        if (capturedPdfUrl) {
-          const pdfUrl = new URL(capturedPdfUrl, location.href).href;
-          try {
-            const resp = await fetch(pdfUrl, { credentials: 'same-origin' });
-            if (!resp.ok) return { ok: false, err: `PDF fetch failed (HTTP ${resp.status})` };
-            const buffer = await resp.arrayBuffer();
-            const bytes = new Uint8Array(buffer);
-            // btoa via chunked fromCharCode — avoids call-stack limit for large files
-            let b64str = '';
-            const chunk = 32768;
-            for (let i = 0; i < bytes.length; i += chunk) {
-              b64str += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-            }
-            return { ok: true, pdfBase64: btoa(b64str) };
-          } catch (e) {
-            return { ok: false, err: 'PDF fetch failed: ' + e.message };
-          }
-        }
-        return { ok: false, err: 'Print button did not open a PDF URL' };
+        // The download fires during/after the postback. Wait for the postback
+        // so the click is fully processed before we return.
+        await postbackPrint;
+        return { ok: true, isPrint: true, waitForNav: false };
       }
 
       // Intercept window.open — injected clicks aren't trusted gestures so
@@ -1022,72 +963,6 @@ function sanitizeFilename(s) {
           .slice(0, 120) || 'download';
 }
 
-// ── Silent download retry ─────────────────────────────────────────────────────
-// USER_CANCELED usually means Chrome showed a "Save As" dialog (e.g. because
-// the user has "Ask where to save each file" enabled in Chrome settings).
-// Fix: re-initiate the download via chrome.downloads.download with saveAs:false,
-// which bypasses Chrome's dialog entirely regardless of that setting.
-
-function retryDownloadSilent(url, filename) {
-  // Ensure onDeterminingFilename has the filename ready for the retry download.
-  // (It's usually pre-set in onDeterminingFilename already; this is a fallback.)
-  if (!state.retryDownloadName) state.retryDownloadName = filename;
-  return new Promise((resolve, reject) => {
-    // No 'filename' here — onDeterminingFilename intercepts this download
-    // and calls suggest() with the correct path. saveAs:false prevents any dialog.
-    chrome.downloads.download({
-      url,
-      saveAs: false,
-      conflictAction: 'uniquify',
-    }, (id) => {
-      if (chrome.runtime.lastError || id == null) {
-        state.retryDownloadName = null;
-        reject(new Error(chrome.runtime.lastError?.message || 'Could not initiate retry download'));
-        return;
-      }
-      state.lastDownloadId = id;
-      waitForDownloadComplete(id, 120000).then(resolve).catch(reject);
-    });
-  });
-}
-
-// ── Sidepanel blob download ───────────────────────────────────────────────────
-// The sidepanel (an extension page) creates a blob URL and calls
-// chrome.downloads.download — this fires onDeterminingFilename, allowing
-// suggest() to set the subfolder path without any Save As dialog appearing.
-// (data: URLs and background-initiated network downloads do NOT reliably fire
-// onDeterminingFilename; blob URLs from extension pages always do.)
-
-let _sidepanelDownloadResolve = null;
-let _sidepanelDownloadReject  = null;
-let _sidepanelDownloadTimer   = null;
-
-function downloadViaSidepanel(pdfBase64, name) {
-  return new Promise((resolve, reject) => {
-    if (_sidepanelDownloadTimer) clearTimeout(_sidepanelDownloadTimer);
-    _sidepanelDownloadResolve = resolve;
-    _sidepanelDownloadReject  = reject;
-    _sidepanelDownloadTimer   = setTimeout(() => {
-      _sidepanelDownloadResolve = null;
-      _sidepanelDownloadReject  = null;
-      _sidepanelDownloadTimer   = null;
-      reject(new Error('Sidepanel download timed out after 2 minutes'));
-    }, 120000);
-    chrome.runtime.sendMessage({
-      _source: 'background',
-      type: 'download_pdf_blob',
-      pdfBase64,
-      filename: name,
-    }).catch((e) => {
-      clearTimeout(_sidepanelDownloadTimer);
-      _sidepanelDownloadResolve = null;
-      _sidepanelDownloadReject  = null;
-      _sidepanelDownloadTimer   = null;
-      reject(new Error('Sidepanel not reachable: ' + (e?.message || 'unknown')));
-    });
-  });
-}
-
 // ── DOM-settle helper ─────────────────────────────────────────────────────────
 // Mirrors navigator.py's _wait_for_change: polls the page DOM fingerprint
 // every 200ms and resolves once it's been stable for `stableMs`, or after
@@ -1193,6 +1068,14 @@ async function runStep(step) {
   const downloadPromise = (t === 'click' && isBtnPrint)
     ? waitForDownload(45000) : null;
 
+  // For the Print button, queue the target filename BEFORE the click so the
+  // native download's onDeterminingFilename can rename + route it. Mirrors
+  // navigator.py building the filename before triggering the download.
+  if (isBtnPrint) {
+    const name = state.pendingDownloadName || 'transcript.pdf';
+    state.retryDownloadName = safeDownloadPath(_cachedSubfolder, name);
+  }
+
   // Inject and execute the step.
   let result;
   try {
@@ -1249,55 +1132,18 @@ async function runStep(step) {
     log('Report ready — saving PDF…', 'muted');
   }
 
-  // pdfBase64 path: page fetched the PDF bytes and returned them as base64.
-  // Forward to the sidepanel which creates a blob URL and calls
-  // chrome.downloads.download — blob URLs from extension pages fire
-  // onDeterminingFilename, so suggest() sets the subfolder path with no dialog.
-  if (result.pdfBase64) {
-    if (downloadPromise) downloadPromise.abort?.();
-    const name = state.pendingDownloadName || 'transcript.pdf';
-    state.pendingDownloadName = null;
-    const filename = safeDownloadPath(_cachedSubfolder, name);
-    log('Saving transcript…', 'muted');
-    // Pre-set so onDeterminingFilename suggests the correct subfolder path.
-    state.retryDownloadName = filename;
-    try {
-      const dlResult = await downloadViaSidepanel(result.pdfBase64, name);
-      state.lastDownloadId = dlResult.dlId || null;
-      state.retryDownloadName = null;
-      result.downloadedFile = dlResult.filename || name;
-    } catch (e) {
-      state.retryDownloadName = null;
-      return { ok: false, err: 'PDF save failed: ' + e.message };
-    }
-    return result;
-  }
-
-  // Download handling (btnPrint triggers a download after its click).
+  // Download handling: the Print click triggered a native browser download.
+  // onDeterminingFilename already renamed it and routed it to the subfolder
+  // (using the filename we queued before the click). Here we just wait for it
+  // to finish — exactly like navigator.py waits on its download event.
   if (downloadPromise) {
-    log('Downloading transcript…', 'muted');
+    log('Saving transcript…', 'muted');
     try {
       const dlItem = await downloadPromise;
-      const filename = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : 'file';
-      result.downloadedFile = filename;
+      result.downloadedFile = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : 'file';
     } catch (e) {
-      // USER_CANCELED means Chrome tried to show a Save As dialog.
-      // We pre-canceled the download in onDeterminingFilename; the retry
-      // re-initiates it silently via chrome.downloads.download({ saveAs:false }).
-      if ((e.message || '').includes('USER_CANCELED')
-          && state.pendingDownloadUrl
-          && state.lastSuggestedFilename) {
-        try {
-          const dlItem = await retryDownloadSilent(state.pendingDownloadUrl, state.lastSuggestedFilename);
-          const filename = dlItem.filename ? dlItem.filename.split(/[/\\]/).pop() : 'file';
-          result.downloadedFile = filename;
-          result.retried = true;
-        } catch (e2) {
-          return { ok: false, err: 'Download failed after retry: ' + e2.message };
-        }
-      } else {
-        return { ok: false, err: 'Download failed: ' + e.message };
-      }
+      state.retryDownloadName = null; // don't let a queued name leak to the next download
+      return { ok: false, err: 'Download failed: ' + e.message };
     }
   }
 

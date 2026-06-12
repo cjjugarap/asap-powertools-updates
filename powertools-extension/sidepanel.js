@@ -438,56 +438,6 @@ chrome.runtime.onMessage.addListener((msg) => {
     recordedRawSteps.push(msg.step);
     logRec(stepToEnglish(msg.step));
   }
-
-  if (msg.type === 'download_pdf_blob') {
-    const { pdfBase64, filename } = msg;
-    try {
-      const bytes = Uint8Array.from(atob(pdfBase64), c => c.charCodeAt(0));
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const blobUrl = URL.createObjectURL(blob);
-      chrome.downloads.download(
-        { url: blobUrl, saveAs: false, conflictAction: 'uniquify' },
-        (dlId) => {
-          URL.revokeObjectURL(blobUrl);
-          if (chrome.runtime.lastError || dlId == null) {
-            chrome.runtime.sendMessage({
-              type: 'sidepanel_download_error',
-              err: chrome.runtime.lastError?.message || 'download() returned null',
-            });
-            return;
-          }
-          function onChange(delta) {
-            if (delta.id !== dlId) return;
-            const st = delta.state?.current;
-            if (st === 'complete') {
-              chrome.downloads.onChanged.removeListener(onChange);
-              chrome.downloads.search({ id: dlId }, items => {
-                const fname = items[0]?.filename?.split(/[/\\]/).pop() || filename;
-                chrome.runtime.sendMessage({
-                  type: 'sidepanel_download_done',
-                  filename: fname,
-                  dlId,
-                });
-              });
-            } else if (st === 'interrupted') {
-              chrome.downloads.onChanged.removeListener(onChange);
-              const reason = delta.error?.current || 'interrupted';
-              chrome.runtime.sendMessage({
-                type: 'sidepanel_download_error',
-                err: `Download interrupted: ${reason}`,
-              });
-            }
-          }
-          chrome.downloads.onChanged.addListener(onChange);
-        }
-      );
-    } catch (e) {
-      chrome.runtime.sendMessage({
-        type: 'sidepanel_download_error',
-        err: e.message,
-      });
-    }
-  }
 });
 
 
